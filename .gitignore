@@ -1,0 +1,7 @@
+# Ignore PyCharm/IntelliJ project files
+.idea/
+
+# Ignore Python bytecode cache
+__pycache__/
+command_executor/__pycache__/
+nlp_engine/__pycache__/
