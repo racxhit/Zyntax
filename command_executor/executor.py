@@ -5,7 +5,7 @@ Description: Takes parsed structured commands and executes the corresponding OS-
              using Linux mappings as a fallback for macOS (Darwin) when applicable.
              Uses psutil for memory usage action.
 Date Created: 05-04-2025
-Last Updated: 06-04-2025
+Last Updated: 13-04-2025
 """
 
 import subprocess
@@ -101,14 +101,17 @@ def get_platform_command(action, args):
             target_dir = args[0]
             print(f"Info: Change directory requested to '{target_dir}'.")
             try:
-                 os.chdir(target_dir)
-                 return "PYTHON_HANDLED_CHDIR_SUCCESS"
+                # Expand ~ to the actual home directory path
+                expanded_target_dir = os.path.expanduser(target_dir)
+                print(f"Debug: Expanded path for chdir: '{expanded_target_dir}'")  # Added debug
+                os.chdir(expanded_target_dir)  # Use the expanded path
+                return "PYTHON_HANDLED_CHDIR_SUCCESS"
             except FileNotFoundError:
-                 print(f"❌ Error: Directory not found: {target_dir}")
-                 return "PYTHON_HANDLED_CHDIR_FAIL"
+                print(f"❌ Error: Directory not found: {expanded_target_dir}")  # Use expanded path in error too
+                return "PYTHON_HANDLED_CHDIR_FAIL"
             except Exception as e:
-                 print(f"❌ Error changing directory: {e}")
-                 return "PYTHON_HANDLED_CHDIR_FAIL"
+                print(f"❌ Error changing directory to {expanded_target_dir}: {e}")  # Use expanded path
+                return "PYTHON_HANDLED_CHDIR_FAIL"
         else:
              print("Info: 'cd' command needs a target directory.")
              return None
