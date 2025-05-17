@@ -103,14 +103,17 @@ def get_platform_command(action, args):
             try:
                 # Expand ~ to the actual home directory path
                 expanded_target_dir = os.path.expanduser(target_dir)
-                print(f"Debug: Expanded path for chdir: '{expanded_target_dir}'")  # Added debug
+                # The debug print for expanded_target_dir was already there, which is good.
                 os.chdir(expanded_target_dir)  # Use the expanded path
                 return "PYTHON_HANDLED_CHDIR_SUCCESS"
             except FileNotFoundError:
-                print(f"❌ Error: Directory not found: {expanded_target_dir}")  # Use expanded path in error too
+                # Use expanded_target_dir in the error message if it was defined
+                error_path = expanded_target_dir if 'expanded_target_dir' in locals() else target_dir
+                print(f"❌ Error: Directory not found: {error_path}")
                 return "PYTHON_HANDLED_CHDIR_FAIL"
             except Exception as e:
-                print(f"❌ Error changing directory to {expanded_target_dir}: {e}")  # Use expanded path
+                error_path = expanded_target_dir if 'expanded_target_dir' in locals() else target_dir
+                print(f"❌ Error changing directory to {error_path}: {e}")
                 return "PYTHON_HANDLED_CHDIR_FAIL"
         else:
              print("Info: 'cd' command needs a target directory.")
