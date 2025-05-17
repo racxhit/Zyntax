@@ -14,12 +14,12 @@ from spacy.lang.en.stop_words import STOP_WORDS
 import traceback
 import os
 
-# --- Configuration ---
+# Configuration
 FUZZY_MATCH_THRESHOLD_EXECUTE = 90
 FUZZY_MATCH_THRESHOLD_SUGGEST = 65
 ENTITY_FILTER_FUZZY_THRESHOLD = 85
 
-# --- Load spaCy Model ---
+# Load spaCy Model
 try:
     nlp = spacy.load("en_core_web_sm", disable=['ner'])
 except OSError:
@@ -27,7 +27,7 @@ except OSError:
     spacy.cli.download("en_core_web_sm")
     nlp = spacy.load("en_core_web_sm", disable=['ner'])
 
-# --- Define Known Actions and Mappings ---
+# Define Known Actions and Mappings
 ACTION_KEYWORDS = {
     # File/Directory Listing & Navigation
     "list files": "list_files", "show files": "list_files", "ls": "list_files",
