@@ -4,7 +4,7 @@ Description: Contains functions to parse natural language inputs and convert the
              into structured command representations (intents and targets).
              Includes entity extraction, filtering, and argument refinement.
 Date Created: 05-04-2025
-Last Updated: 17-05-2025
+Last Updated: 19-05-2025 # Refactor 23: Aggressive Entity Cleaning
 """
 
 import re
@@ -18,7 +18,7 @@ import os
 # Configuration
 FUZZY_MATCH_THRESHOLD_EXECUTE = 90
 FUZZY_MATCH_THRESHOLD_SUGGEST = 65
-ENTITY_FILTER_FUZZY_THRESHOLD = 87
+ENTITY_FILTER_FUZZY_THRESHOLD = 88
 
 # Load spaCy Model
 try:
@@ -28,9 +28,8 @@ except OSError:
     spacy.cli.download("en_core_web_sm")
     nlp = spacy.load("en_core_web_sm", disable=['ner'])
 
-# Known Actions and Mappings
+# Define Known Actions and Mappings
 ACTION_KEYWORDS = {
-    # File/Directory Listing & Navigation
     "list files": "list_files", "show files": "list_files", "ls": "list_files",
     "display files": "list_files", "contents of": "list_files",
     "what files are": "list_files", "list all": "list_files",
@@ -47,7 +46,6 @@ ACTION_KEYWORDS = {
     "change my location to": "change_directory", "move to": "change_directory",
     "go up one level": "change_directory", "go back": "change_directory",
 
-    # Directory Creation/Deletion
     "make folder": "make_directory", "create folder": "make_directory",
     "make directory": "make_directory", "create directory": "make_directory",
     "mkdir": "make_directory", "make dir": "make_directory", "create dir": "make_directory",
@@ -58,7 +56,6 @@ ACTION_KEYWORDS = {
     "delete dir": "delete_directory", "remove dir": "delete_directory", "rmdir": "delete_directory",
     "get rid of folder": "delete_directory", "get rid of directory": "delete_directory",
 
-    # File Creation/Deletion
     "create file": "create_file", "make file": "create_file",
     "touch file": "create_file", "new file": "create_file",
     "touch": "create_file", "generate empty file": "create_file",
@@ -66,7 +63,6 @@ ACTION_KEYWORDS = {
     "delete file": "delete_file", "remove file": "delete_file", "rm": "delete_file",
     "get rid of file": "delete_file", "get rid of": "delete_file",
 
-    # File Operations
     "display file": "display_file", "display file content": "display_file",
     "show file content": "display_file", "cat file": "display_file", "view file": "display_file",
     "cat": "display_file", "view": "display_file",
@@ -80,16 +76,13 @@ ACTION_KEYWORDS = {
     "duplicate file": "copy_file", "make copy": "copy_file",
     "copy": "copy_file",
 
-    # System Info
     "who am i": "whoami", "whoami": "whoami",
     "who is the current user": "whoami",
 
-    # Git Commands
     "git status": "git_status", "check git status": "git_status",
     "initialize git": "git_init", "git init": "git_init",
     "commit changes": "git_commit", "git commit": "git_commit",
 
-    # System Monitoring
     "show processes": "show_processes", "list processes": "show_processes", "ps": "show_processes",
     "list running processes": "show_processes",
 
@@ -100,37 +93,54 @@ ACTION_KEYWORDS = {
     "check system memory": "memory_usage",
 }
 
+ARG_SPLIT_KEYWORDS = {'to', 'as', 'into', 'se', 'ko', 'mein'}
+
+COMMAND_VERBS = {'ls', 'cd', 'pwd', 'mkdir', 'rm', 'cp', 'mv', 'ps', 'df', 'free', 'git', 'cat', 'touch', 'view', 'rmdir', 'dir', 'md', 'del', 'rd', 'copy', 'move', 'ren', 'rename', 'go', 'enter', 'navigate', 'display', 'check', 'initialize', 'commit', 'generate', 'remove', 'get', 'rid', 'tell', 'print', 'duplicate', 'make', 'show', 'list', 'change', 'delete', 'banao', 'dikhao', 'karo', 'hatao', 'badlo', 'jao'}
+
 ENTITY_IGNORE_WORDS = (
-    STOP_WORDS |
-    # Common command verbs/keywords that are unlikely to be arguments themselves
-    # crucial for filtering noun chunks and final entities
-    {'ls', 'cd', 'pwd', 'mkdir', 'rm', 'cp', 'mv', 'ps', 'df', 'free', 'git',
-     'cat', 'touch', 'view', 'rmdir', 'dir', 'md', 'del', 'rd', 'copy', 'move', 'ren',
-     'go', 'enter', 'navigate', 'display', 'check', 'initialize', 'commit',
-     'generate', 'remove', 'get', 'rid', 'tell', 'print', 'duplicate',
-     'make', 'show', 'list', 'change', 'delete',
-     'file', 'folder', 'directory', 'named', 'called', 'with', 'name', # 'name' can be tricky
-     'to', 'from', 'a', 'the', 'in', 'on', 'at', 'me', 'my', 'please', 'using',
+    STOP_WORDS | COMMAND_VERBS |
+    {'file', 'folder', 'directory', 'named', 'called', 'with', 'name',
+     'from', 'a', 'the', 'in', 'on', 'at', 'me', 'my', 'please', 'using',
      'via', 'of', 'contents', 'empty', 'new', 'working', 'one', 'level', 'up',
      'current', 'everything', 'here', 'this', 'all', 'running', 'now', 'is',
-     'are', 'system', 'location', 'arguments', 'mein', 'karo', 'dikhao', 'batao',
-
-     # Hinglish stopwords
-     "ko", "mein", "se", "ka", "ki", "ke", "hai", "hoon", "ho", "kya", "mera", "meri", "mere",
-     "batao", "dikhao", "karo", "dekho", "banao", "hatao", "badlo", "kaun", "kitna", "kitni",
-     "jao", "aao", "sabhi", "sab", "ek", "agar", "toh", "phir", "yeh", "woh", "aur", "bhi",
+     'are', 'system', 'location', 'arguments', 'mein'} |
+    {"ka", "ki", "ke", "hai", "hoon", "ho", "kya", "mera", "meri", "mere",
+     "sabhi", "sab", "ek", "agar", "toh", "phir", "yeh", "woh", "aur", "bhi",
      "abhi", "wala", "wali", "naya", "nayi", "naye", "kuch", "thoda", "pura", "sirf", "bas"}
 )
+# For building phrases, we allow ARG_SPLIT_KEYWORDS to be part of them initially
+ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING = ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS
 
-def extract_relevant_entities(doc, text):
-    """
-    Extracts potential arguments using a layered approach:
-    1. Regex for explicit paths and quoted strings.
-    2. spaCy noun chunks for remaining parts of the text, with stricter filtering.
-    3. Final filtering.
-    """
+
+def _is_token_covered(token, processed_char_indices):
+    start_idx, end_idx = token.idx, token.idx + len(token.text)
+    covered_count = 0
+    for i in range(start_idx, end_idx):
+        if i < len(processed_char_indices) and processed_char_indices[i]:
+            covered_count += 1
+    return covered_count > (len(token.text) * 0.5)
+
+def _is_valid_start_of_entity_phrase(token_lower):
+    """A token can START a phrase if it's not a COMMAND_VERB (unless path-like)
+       AND it's generally valid for a phrase component."""
+    is_command_verb_like = token_lower in COMMAND_VERBS and \
+                           not (any(c in token_lower for c in './\\0123456789') or token_lower in ['..', '~'])
+    return not is_command_verb_like and \
+           (token_lower not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING or \
+            any(c in token_lower for c in './\\0123456789') or \
+            token_lower in ['..', '~'] or token_lower in ARG_SPLIT_KEYWORDS)
+
+def _is_valid_continuation_of_entity_phrase(token_lower):
+    """A token can CONTINUE a phrase if it's not a general ignore word (but can be a split keyword)
+       OR it's path-like/numeric."""
+    return token_lower not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING or \
+           any(c in token_lower for c in './\\0123456789') or \
+           token_lower in ['..', '~'] or token_lower in ARG_SPLIT_KEYWORDS
+
+
+def extract_relevant_entities(doc, text_for_extraction):
     entities_with_spans = []
-    processed_char_indices = [False] * len(text)
+    processed_char_indices = [False] * len(text_for_extraction)
 
     def mark_processed(start, end):
         for i in range(start, end):
@@ -138,88 +148,110 @@ def extract_relevant_entities(doc, text):
 
     # Strategy 1: Regex for Paths and Quoted Strings
     path_pattern = r"([\"'])(.+?)\1|((?:~|\.\.|\.)?/(?:[a-zA-Z0-9_./\- ]|\\ )+/?)|([a-zA-Z0-9_.-]+\.[a-zA-Z0-9_.-]+)|(\.\.)|([a-zA-Z0-9_-]+(?:[/\\].*)?)"
-    for match in re.finditer(path_pattern, text):
+    for match in re.finditer(path_pattern, text_for_extraction):
         entity_text = match.group(2) or match.group(3) or match.group(4) or match.group(5) or match.group(6)
         if entity_text:
             entity_text = entity_text.strip()
             start, end = match.span()
-            is_overlapping = any(max(start, ps_start) < min(end, ps_end) for _, (ps_start, ps_end) in entities_with_spans)
-            if not is_overlapping:
-                entities_with_spans.append((entity_text, (start, end)))
-                mark_processed(start, end)
+            already_covered_chars = sum(1 for i in range(start,end) if processed_char_indices[i])
+            if already_covered_chars < (end - start) * 0.5 and entity_text:
+                is_path = '/' in entity_text or '\\' in entity_text or entity_text in ['..', '~']
+                already_exists = any((entity_text == et) or (not is_path and entity_text.lower() == et.lower()) for et, _ in entities_with_spans)
+                if not already_exists:
+                    entities_with_spans.append((entity_text, (start, end)))
+                    mark_processed(start, end)
 
-    # Strategy 2: spaCy Noun Chunks for Remaining Text
-    for chunk in doc.noun_chunks:
-        chunk_start, chunk_end = chunk.start_char, chunk.end_char
-        covered_chars = sum(1 for i in range(chunk_start, chunk_end) if processed_char_indices[i])
-        if covered_chars > len(chunk.text) * 0.75: # If > 75% covered, likely already handled
-            continue
+    # Strategy 2: spaCy Token Iteration for Remaining Text
+    current_phrase_tokens_text = []
+    current_phrase_start_char = -1
 
-        chunk_text = chunk.text.strip()
-        # Stricter filtering for noun chunks:
-        words_in_chunk = chunk_text.lower().split()
-        # Ignore if empty, all words are ignore words, or if it's a single word that's an ignore word
-        if not chunk_text or \
-           all(word in ENTITY_IGNORE_WORDS for word in words_in_chunk) or \
-           (len(words_in_chunk) == 1 and words_in_chunk[0] in ENTITY_IGNORE_WORDS):
-            print(f"Debug EntityExtract: Ignoring noun chunk '{chunk_text}' (all ignore words).")
-            continue
+    for token in doc:
+        is_covered_by_regex = _is_token_covered(token, processed_char_indices)
 
-        # Further filter: if the chunk contains critical command verbs, it's likely not an entity
-        # unless it also looks like a path or filename.
-        critical_verbs = {'make', 'create', 'delete', 'remove', 'show', 'list', 'change', 'move', 'rename', 'copy', 'display', 'cat', 'view', 'touch', 'cd', 'mkdir', 'rm', 'cp', 'mv'}
-        contains_critical_verb = any(verb in words_in_chunk for verb in critical_verbs)
-        looks_like_path_or_file = any(char in chunk_text for char in './\\') or any(chunk_text.endswith(ext) for ext in ['.txt', '.py', '.js', '.md', '.csv', '.json', '.docx'])
+        if not is_covered_by_regex and not token.is_punct:
+            token_lower = token.lower_
+            if not current_phrase_tokens_text: # Potential start of a new phrase
+                if _is_valid_start_of_entity_phrase(token_lower):
+                    current_phrase_start_char = token.idx
+                    current_phrase_tokens_text.append(token.text)
+                else: # Not a valid start, mark as processed if it's an ignore word
+                    if token_lower in ENTITY_IGNORE_WORDS: mark_processed(token.idx, token.idx + len(token.text))
 
-        if contains_critical_verb and not looks_like_path_or_file:
-            print(f"Debug EntityExtract: Ignoring noun chunk '{chunk_text}' (contains critical verb, not path/file).")
-            continue
+            elif _is_valid_continuation_of_entity_phrase(token_lower): # Continue existing phrase
+                current_phrase_tokens_text.append(token.text)
 
-        # Refined check to avoid adding if it's a substring of an existing regex-found entity
-        is_substring_of_regex_entity = any(
-            (chunk_text.lower() in regex_entity_text.lower() or regex_entity_text.lower() in chunk_text.lower()) and \
-            (len(regex_entity_text) > len(chunk_text) or len(chunk_text) > len(regex_entity_text)) # Ensure not identical
-            for regex_entity_text, _ in entities_with_spans
-        )
-        if is_substring_of_regex_entity:
-            print(f"Debug EntityExtract: Ignoring noun chunk '{chunk_text}' as substring of regex entity.")
-            continue
+            else: # Current token breaks the phrase
+                if current_phrase_tokens_text:
+                    entity_text = " ".join(current_phrase_tokens_text).strip()
+                    # No need for _clean_entity_phrase if construction is stricter
+                    if entity_text:
+                        phrase_end_char = token.idx
+                        if not any(entity_text == et for et, _ in entities_with_spans):
+                            entities_with_spans.append((entity_text, (current_phrase_start_char, phrase_end_char)))
+                            mark_processed(current_phrase_start_char, phrase_end_char)
+                    current_phrase_tokens_text = []
+                    current_phrase_start_char = -1
+                # Mark the breaking ignore word as processed
+                if token_lower in ENTITY_IGNORE_WORDS: mark_processed(token.idx, token.idx + len(token.text))
 
-        if any(chunk_text == regex_entity_text for regex_entity_text, _ in entities_with_spans):
-            continue # Already added by regex
+        elif current_phrase_tokens_text: # Token is covered by regex or is punctuation, finalize phrase
+            entity_text = " ".join(current_phrase_tokens_text).strip()
+            if entity_text:
+                phrase_end_char = token.idx
+                if not any(entity_text == et for et, _ in entities_with_spans):
+                    entities_with_spans.append((entity_text, (current_phrase_start_char, phrase_end_char)))
+                    mark_processed(current_phrase_start_char, phrase_end_char)
+            current_phrase_tokens_text = []
+            current_phrase_start_char = -1
+            if is_covered_by_regex: mark_processed(token.idx, token.idx + len(token.text))
 
-        entities_with_spans.append((chunk_text, (chunk_start, chunk_end)))
-        mark_processed(chunk_start, chunk_end)
+
+    if current_phrase_tokens_text: # Adds any remaining phrase
+        entity_text = " ".join(current_phrase_tokens_text).strip()
+        if entity_text:
+            phrase_end_char = len(text_for_extraction)
+            if not any(entity_text == et for et, _ in entities_with_spans):
+                 if current_phrase_start_char != -1 :
+                    entities_with_spans.append((entity_text, (current_phrase_start_char, phrase_end_char)))
+                    mark_processed(current_phrase_start_char, phrase_end_char)
 
     entities_with_spans.sort(key=lambda x: x[1][0])
-    current_entities_text = [entity_tuple[0] for entity_tuple in entities_with_spans]
+    current_entities_text = [entity_tuple[0] for entity_tuple in entities_with_spans if entity_tuple[0]]
 
     # Strategy 3: Final Filtering
     final_filtered_entities = []
-    fuzzy_check_list = ['folder', 'directory', 'file', 'delete', 'create', 'rename', 'move', 'list', 'show', 'change', 'copy', 'git', 'status', 'commit', 'process', 'memory', 'disk']
+    fuzzy_check_list_args = ['folder', 'directory', 'file']
 
     for entity in current_entities_text:
         entity_lower = entity.lower()
-        # Exact match short command verbs (if they slipped through)
-        if entity_lower in {'ls', 'cd', 'rm', 'cp', 'mv', 'ps', 'df', 'cat', 'pwd', 'touch', 'mkdir', 'git'}:
-             if not ('.' in entity or '/' in entity or '\\' in entity or entity in ['..','~']):
-                  print(f"Debug EntityExtract: Final filter for exact short command: '{entity}'")
-                  continue
+        is_path_like_or_num_or_long = ('.' in entity or '/' in entity or '\\' in entity or entity in ['..','~'] or any(char.isdigit() for char in entity) or len(entity)>3)
+
+        # Filter exact command verbs if not clearly an argument AND not an ARG_SPLIT_KEYWORD
+        if entity_lower in COMMAND_VERBS and not is_path_like_or_num_or_long and entity_lower not in ARG_SPLIT_KEYWORDS:
+            print(f"Debug EntityExtract: Final filter (exact verb): '{entity}'")
+            continue
+
+        # Filter general ignore words (that are not split keywords) if not path-like etc.
+        # This is a bit redundant if token iteration is good, but acts as a safeguard.
+        if entity_lower in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING and not is_path_like_or_num_or_long:
+            if not entity.isdigit(): # Allow numbers
+                print(f"Debug EntityExtract: Final filter (exact ignore word): '{entity}'")
+                continue
 
         is_fuzzy_keyword = False
-        for keyword in fuzzy_check_list:
-            if fuzz.ratio(entity_lower, keyword) > ENTITY_FILTER_FUZZY_THRESHOLD:
-                 looks_like_arg = (any(char.isdigit() for char in entity) or
+        for keyword in fuzzy_check_list_args: # Only check against 'folder', 'directory', 'file'
+            if fuzz.ratio(entity_lower, keyword) > ENTITY_FILTER_FUZZY_THRESHOLD + 2: # 90
+                 looks_like_arg_f = (any(char.isdigit() for char in entity) or
                                   '/' in entity or '\\' in entity or
                                   '.' in entity or entity in ['..', '~'])
-
-                 if looks_like_arg and len(entity) > 1 :
-                      if len(entity) <= 3 and fuzz.ratio(entity_lower, keyword) > 92 and not (looks_like_arg and '.' in entity):
-                           is_fuzzy_keyword = True; print(f"Debug EntityExtract: Filtered (fuzzy) very short entity '{entity}' similar to '{keyword}'"); break
-                 elif not looks_like_arg:
-                      is_fuzzy_keyword = True; print(f"Debug EntityExtract: Filtered (fuzzy) entity '{entity}' similar to '{keyword}' (Score > {ENTITY_FILTER_FUZZY_THRESHOLD})"); break
+                 if not looks_like_arg_f: # Only filter if it doesn't look like an arg
+                      is_fuzzy_keyword = True
+                      print(f"Debug EntityExtract: Filtered (fuzzy) non-arg entity '{entity}' similar to '{keyword}'")
+                      break
         if is_fuzzy_keyword: continue
-        final_filtered_entities.append(entity)
+
+        if entity: # Ensure entity is not empty
+            final_filtered_entities.append(entity)
 
     seen = set()
     unique_entities = [x for x in final_filtered_entities if not (x in seen or seen.add(x))]
@@ -227,39 +259,47 @@ def extract_relevant_entities(doc, text):
     return unique_entities
 
 
-def select_primary_argument(args_list):
-    """
-    From a list of extracted entities, select the most likely primary argument.
-    Prefers longer entities, those not in ignore list, or the last one.
-    """
-    if not args_list:
+def select_primary_argument(args_list, action_id=None):
+    if not args_list: return None
+
+    # Use the comprehensive ENTITY_IGNORE_WORDS but exclude ARG_SPLIT_KEYWORDS
+    # because we want to select a primary argument, not a separator.
+    selection_ignore_words = ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS
+
+    candidate_args = [arg for arg in args_list if arg.lower() not in ARG_SPLIT_KEYWORDS]
+    if not candidate_args: # If only split keywords were passed, that's an issue.
+        if args_list : print(f"Debug select_primary_argument: Only split keywords found in {args_list}, returning None.")
         return None
 
-    # Filter out any remaining common command verbs/stopwords explicitly
-    # This is a stricter version of ENTITY_IGNORE_WORDS for final selection
-    strict_ignore = {'make', 'create', 'delete', 'remove', 'show', 'list', 'change', 'move', 'rename', 'copy', 'display', 'cat', 'view', 'touch', 'cd', 'mkdir', 'rm', 'cp', 'mv', 'git', 'go', 'enter', 'navigate', 'get', 'rid', 'tell', 'print', 'duplicate', 'file', 'folder', 'directory', 'dir', 'named', 'called', 'with', 'name', 'to', 'from', 'a', 'the', 'in', 'on', 'at', 'me', 'my', 'please', 'using', 'via', 'of', 'contents', 'empty', 'new', 'working', 'one', 'level', 'up', 'current', 'everything', 'here', 'this', 'all', 'running', 'now', 'is', 'are', 'system', 'location', 'arguments'} | STOP_WORDS
 
-    # Prefer entities that look like paths/filenames or are longer
-    best_arg = None
-    max_score = -1
+    # 1. Prefer entities that look like paths or filenames or contain digits
+    for arg_candidate in reversed(candidate_args):
+        arg_cand_lower = arg_candidate.lower()
+        is_path_like = '/' in arg_candidate or '\\' in arg_candidate or arg_candidate in ['..', '~']
+        has_extension = '.' in arg_candidate and not arg_candidate.startswith('.')
+        has_digits = any(c.isdigit() for c in arg_candidate)
 
-    for arg in reversed(args_list): # Iterate from the end
-        if arg.lower() in strict_ignore and not ('.' in arg or '/' in arg or '\\' in arg or arg in ['..', '~']):
-            continue # Skip if it's a stopword unless it looks like a path/file
+        if is_path_like or has_extension or has_digits:
+            # If it looks like a path/file/digit, it's a strong candidate, even if it's an ignore word
+            # (e.g. folder named "new", file named "file.txt")
+            print(f"Debug select_primary_argument: Selected path/file/digit-like '{arg_candidate}' from {candidate_args}")
+            return arg_candidate
 
-        score = len(arg) # Simple score: length
-        if '.' in arg or '/' in arg or '\\' in arg or any(char.isdigit() for char in arg):
-            score += 10 # Boost score for path/file-like features
+    # 2. If no clear path/file, select the last non-ignore word
+    for arg_candidate in reversed(candidate_args):
+        if arg_candidate.lower() not in selection_ignore_words:
+            print(f"Debug select_primary_argument: Selected last non-ignore word '{arg_candidate}' from {candidate_args}")
+            return arg_candidate
 
-        if score > max_score:
-            max_score = score
-            best_arg = arg
+    # 3. Fallback: if all were ignore words (after filtering split keywords), but list was not empty initially.
+    if candidate_args:
+        last_candidate_arg = candidate_args[-1].strip()
+        if last_candidate_arg:
+            print(f"Debug select_primary_argument: Fallback, selected last candidate arg '{last_candidate_arg}'")
+            return last_candidate_arg
 
-    if best_arg:
-        return best_arg
-
-    # Fallback if all were filtered (rare)
-    return args_list[-1] if args_list else None
+    print(f"Debug select_primary_argument: No suitable primary argument found in {args_list}")
+    return None
 
 
 def parse_input(text):
@@ -271,7 +311,7 @@ def parse_input(text):
         text_lower = text.lower().strip()
         if not text_lower: return None
 
-        action_id, initial_args, parsed_args = None, [], []
+        action_id, initial_args_str, parsed_args = None, "", []
         suggestion_action_id, suggestion_phrase = None, None
         match_result, score, matched_direct = None, 0, False
         cmd_prefix_for_fallback_msg = ""
@@ -290,10 +330,7 @@ def parse_input(text):
                 if not cmd_prefix.endswith(' ') and text_lower != cmd_prefix: continue
                 print(f"Debug: Direct command prefix match for '{cmd_prefix}'")
                 action_id = mapped_action
-                arg_string_direct = original_text[len(cmd_prefix):].strip()
-                # For direct commands, pass the whole arg string as a single item for now
-                # extract_relevant_entities will try to split it more intelligently if needed for mv/cp
-                initial_args = [arg_string_direct] if arg_string_direct else []
+                initial_args_str = original_text[len(cmd_prefix):].strip()
                 matched_direct = True
                 if action_id == 'git_commit': cmd_prefix_for_fallback_msg = cmd_prefix.strip()
                 break
@@ -322,25 +359,13 @@ def parse_input(text):
             return {'action': 'unrecognized'}
 
         doc = nlp(original_text)
-        # If direct match had initial_args, use them as primary input for entity extraction
-        # Otherwise, use the full original text.
-        text_to_extract_from = initial_args[0] if matched_direct and initial_args else original_text
-        doc_for_extraction = nlp(text_to_extract_from) # Process relevant part
+        text_to_extract_from = initial_args_str if matched_direct and initial_args_str else original_text
+        doc_for_extraction = nlp(text_to_extract_from)
 
         args = extract_relevant_entities(doc_for_extraction, text_to_extract_from)
-        # If direct match and args are empty after extraction, but arg_string_direct was not,
-        # it means extraction filtered everything. Fallback to shlex for direct.
-        if matched_direct and arg_string_direct and not args:
-            try:
-                args = shlex.split(arg_string_direct)
-                print(f"Debug: Using shlex-split args for direct match as fallback: {args}")
-            except ValueError: # Handle empty string or other shlex errors
-                args = [arg_string_direct] if arg_string_direct else []
-
-
         print(f"Debug: Args after extraction, before refinement: {args}")
 
-        # 3. Heuristics & Action Overrides (Applied to current_action_guess)
+        # 3. Heuristics & Action Overrides
         if current_action_guess in ['list_files', 'show_path'] and len(args) == 1:
             filename_pattern = r"\.[a-zA-Z0-9]+$"
             arg_check = args[0]
@@ -363,45 +388,91 @@ def parse_input(text):
         # 4. Argument Refinement based on Final Action
         parsed_args = []
         if action_id in ['make_directory', 'create_file', 'delete_file', 'delete_directory', 'display_file']:
-            selected_arg = select_primary_argument(args)
+            selected_arg = select_primary_argument(args, action_id)
             if selected_arg: parsed_args = [selected_arg]
             else: print(f"Warning: Action '{action_id}' requires an argument, none suitable in {args}."); parsed_args = []
 
         elif action_id == 'change_directory':
-             if args:
-                  chosen_arg = None
+             selected_arg = select_primary_argument(args, action_id)
+             if selected_arg:
                   home_path_variants = {'home', '~', 'ghar'}
-                  actual_home = os.path.expanduser("~")
-                  for arg_val in args: # Search all extracted args
-                      if arg_val.lower() in home_path_variants or arg_val == actual_home:
-                          chosen_arg = '~'; break
-                      if arg_val == '..':
-                          chosen_arg = '..'; break
-                  if chosen_arg: parsed_args = [chosen_arg]
-                  else: parsed_args = [args[0]] # Default to first if no special case
+                  actual_home_for_comp = os.path.expanduser("~")
+                  if selected_arg.lower() in home_path_variants or selected_arg == actual_home_for_comp or selected_arg == '~':
+                       parsed_args = ['~']
+                  elif selected_arg == '..': parsed_args = ['..']
+                  else: parsed_args = [selected_arg]
              else: parsed_args = []
 
         elif action_id == 'move_rename' or action_id == 'copy_file':
             source, destination = None, None
-            # Try to use shlex if it's a direct command and args were not split well by extract_entities
-            if matched_direct and arg_string_direct and len(args) < 2:
-                try: args = shlex.split(arg_string_direct)
-                except: pass # Keep original args if shlex fails
+            candidate_args = list(args) # Start with the (hopefully) cleaner list
 
-            if len(args) >= 2:
-                keywords = ['to', 'as', 'into', 'se', 'ko', 'mein']
+            # If direct match and initial_args_str was complex, and extract_relevant_entities
+            # didn't give at least two args, try shlex on original direct string.
+            if matched_direct and initial_args_str and (' ' in initial_args_str or '\t' in initial_args_str):
+                if len(candidate_args) < 2 or not all(s.strip() for s in candidate_args):
+                    try:
+                        shlex_args = [s for s in shlex.split(initial_args_str) if s]
+                        if len(shlex_args) >= 2 :
+                            candidate_args = shlex_args # Use shlexed args
+                            print(f"Debug: Using shlex-split args for mv/cp: {candidate_args}")
+                    except: pass
+
+            # Now, candidate_args should be the best list of potential arguments
+            # ARG_SPLIT_KEYWORDS should be preserved by extract_relevant_entities if between valid args.
+            if len(candidate_args) >= 2:
                 split_found = False
-                for i in range(len(args) - 2, 0, -1):
-                    if args[i].lower() in keywords:
-                         source = " ".join(args[:i]); destination = " ".join(args[i+1:])
-                         split_found = True; print(f"Debug: Split mv/cp args by keyword '{args[i]}': S='{source}', D='{destination}'"); break
-                if not split_found:
-                    source = args[0]; destination = " ".join(args[1:])
-                    print(f"Debug: Split mv/cp args by position: S='{source}', D='{destination}'")
+                # Finds the last split keyword BETWEEN potential args
+                for i in range(len(candidate_args) - 2, 0, -1):
+                    if candidate_args[i].lower() in ARG_SPLIT_KEYWORDS:
+                         # Select primary arguments from the sub-lists
+                         source_list = candidate_args[:i]
+                         dest_list = candidate_args[i+1:]
+
+                         temp_source = select_primary_argument(source_list, action_id)
+                         temp_destination = select_primary_argument(dest_list, action_id)
+
+                         if temp_source and temp_destination:
+                              source = temp_source; destination = temp_destination
+                              split_found = True
+                              print(f"Debug: Split mv/cp args by keyword '{candidate_args[i]}': S='{source}', D='{destination}'")
+                              break
+                if not split_found: # Fallback to positional
+                    # Select two "best" arguments if no split keyword found
+                    arg1 = select_primary_argument(candidate_args)
+                    temp_remaining = list(candidate_args)
+                    if arg1 in temp_remaining: temp_remaining.remove(arg1)
+                    arg2 = select_primary_argument(temp_remaining)
+
+                    if arg1 and arg2:
+                        # Determine order based on original position in candidate_args
+                        try:
+                            if candidate_args.index(arg1) < candidate_args.index(arg2):
+                                source = arg1; destination = arg2
+                            else:
+                                source = arg2; destination = arg1
+                        except ValueError: source = arg1; destination = arg2 # Default order
+                    elif arg1: # Only one good argument found, assume it's source
+                        source = arg1
+                        print(f"Debug mv/cp: Only one primary arg found '{arg1}', assuming source.")
+                    else: # Fallback if selection fails
+                        if len(candidate_args) >= 2:
+                            source = candidate_args[0]; destination = " ".join(candidate_args[1:])
+                        elif candidate_args:
+                            source = candidate_args[0]
+                    print(f"Debug: Split mv/cp args by position from candidates: S='{source}', D='{destination}'")
+
+
                 if source and destination: parsed_args = [source, destination]
-                else: print(f"Warning: Could not determine S/D for '{action_id}'. Args: {args}"); parsed_args = args[:2] if len(args) >=2 else args
-            elif len(args) == 1: print(f"Warning: '{action_id}' requires S/D. Only one arg: {args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
-            else: print(f"Warning: '{action_id}' requires S/D. None provided."); return {'action': 'error', 'message': f"Missing args for {action_id}"}
+                elif source and not destination: # Only source found, error
+                     print(f"Warning: '{action_id}' requires S/D. Only source '{source}' found. Cand Args: {candidate_args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
+                else:
+                     print(f"Warning: Could not determine S/D for '{action_id}'. Candidate Args: {candidate_args}");
+                     if len(candidate_args) >=2: parsed_args = candidate_args[:2]
+                     elif candidate_args: parsed_args = candidate_args
+                     else: parsed_args = []
+            elif len(candidate_args) == 1: print(f"Warning: '{action_id}' requires S/D. Only one candidate: {candidate_args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
+            else: print(f"Warning: '{action_id}' requires S/D. No candidate args from {args}."); return {'action': 'error', 'message': f"Missing args for {action_id}"}
 
         elif action_id == 'git_commit':
             msg_match = re.search(r"(?:-m|message)\s+([\"'])(.+?)\1", original_text, re.IGNORECASE)
@@ -420,12 +491,15 @@ def parse_input(text):
                 if fallback_msg:
                      print(f"Warning: Commit message flag not found. Using text after command: '{fallback_msg}'")
                      parsed_args = ["-m", fallback_msg]
-                elif args and not (matched_direct and arg_string_direct): # If fuzzy matched and args remain (not from direct)
-                    fallback_msg = " ".join(args)
-                    print(f"Warning: Commit message flag not found. Using remaining extracted args: '{fallback_msg}'")
-                    parsed_args = ["-m", fallback_msg]
-                else:
-                     print("Error: Commit message required via -m '...' or after command."); return {'action': 'error', 'message': 'Commit message required'}
+                elif args :
+                    commit_msg_parts = [arg for arg in args if arg.lower() not in (ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS) or len(arg)>1 or any(c in arg for c in './\\0123456789')]
+                    if not commit_msg_parts and args: commit_msg_parts = args
+                    if commit_msg_parts:
+                        fallback_msg = " ".join(commit_msg_parts)
+                        print(f"Warning: Commit message flag not found. Using remaining extracted args: '{fallback_msg}'")
+                        parsed_args = ["-m", fallback_msg]
+                    else: print("Error: Commit message required."); return {'action': 'error', 'message': 'Commit message required'}
+                else: print("Error: Commit message required."); return {'action': 'error', 'message': 'Commit message required'}
 
         elif action_id in ['list_files', 'show_path', 'whoami', 'git_status', 'git_init', 'show_processes', 'disk_usage', 'memory_usage']:
              if args: print(f"Debug: Action '{action_id}' doesn't take arguments, ignoring extracted: {args}")
@@ -448,3 +522,4 @@ def parse_input(text):
          print("Traceback:")
          traceback.print_exc()
          return {'action': 'error', 'message': f'Internal parser error: {type(e).__name__}'}
+
