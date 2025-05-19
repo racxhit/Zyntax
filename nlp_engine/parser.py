@@ -2,9 +2,9 @@
 File: parser.py
 Description: Contains functions to parse natural language inputs and convert them
              into structured command representations (intents and targets).
-             Includes entity extraction, filtering, and argument refinement.
+             Includes entity extraction, filtering, argument refinement, and pipelining.
 Date Created: 05-04-2025
-Last Updated: 19-05-2025 # Refactor 23: Aggressive Entity Cleaning
+Last Updated: 19-05-2025 # Refactor 27: NL Pipe Entity Fix
 """
 
 import re
@@ -91,11 +91,12 @@ ACTION_KEYWORDS = {
 
     "memory usage": "memory_usage", "show memory": "memory_usage", "free": "memory_usage",
     "check system memory": "memory_usage",
+    "grep": "grep", "find text": "grep", "search for text": "grep", "filter for": "grep",
 }
 
 ARG_SPLIT_KEYWORDS = {'to', 'as', 'into', 'se', 'ko', 'mein'}
 
-COMMAND_VERBS = {'ls', 'cd', 'pwd', 'mkdir', 'rm', 'cp', 'mv', 'ps', 'df', 'free', 'git', 'cat', 'touch', 'view', 'rmdir', 'dir', 'md', 'del', 'rd', 'copy', 'move', 'ren', 'rename', 'go', 'enter', 'navigate', 'display', 'check', 'initialize', 'commit', 'generate', 'remove', 'get', 'rid', 'tell', 'print', 'duplicate', 'make', 'show', 'list', 'change', 'delete', 'banao', 'dikhao', 'karo', 'hatao', 'badlo', 'jao'}
+COMMAND_VERBS = {'ls', 'cd', 'pwd', 'mkdir', 'rm', 'cp', 'mv', 'ps', 'df', 'free', 'git', 'cat', 'touch', 'view', 'rmdir', 'dir', 'md', 'del', 'rd', 'copy', 'move', 'ren', 'rename', 'go', 'enter', 'navigate', 'display', 'check', 'initialize', 'commit', 'generate', 'remove', 'get', 'rid', 'tell', 'print', 'duplicate', 'make', 'show', 'list', 'change', 'delete', 'banao', 'dikhao', 'karo', 'hatao', 'badlo', 'jao', 'grep', 'find', 'filter'}
 
 ENTITY_IGNORE_WORDS = (
     STOP_WORDS | COMMAND_VERBS |
@@ -103,13 +104,18 @@ ENTITY_IGNORE_WORDS = (
      'from', 'a', 'the', 'in', 'on', 'at', 'me', 'my', 'please', 'using',
      'via', 'of', 'contents', 'empty', 'new', 'working', 'one', 'level', 'up',
      'current', 'everything', 'here', 'this', 'all', 'running', 'now', 'is',
-     'are', 'system', 'location', 'arguments', 'mein'} |
+     'are', 'system', 'location', 'arguments', 'mein', 'text'} |
     {"ka", "ki", "ke", "hai", "hoon", "ho", "kya", "mera", "meri", "mere",
      "sabhi", "sab", "ek", "agar", "toh", "phir", "yeh", "woh", "aur", "bhi",
      "abhi", "wala", "wali", "naya", "nayi", "naye", "kuch", "thoda", "pura", "sirf", "bas"}
 )
-# For building phrases, we allow ARG_SPLIT_KEYWORDS to be part of them initially
 ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING = ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS
+
+NL_PIPE_INDICATORS = [
+    r'\s+and then\s+', r'\s+then pipe to\s+', r'\s+pipe to\s+',
+    r'\s+piped to\s+', r'\s+and pass to\s+', r'\s+and send output to\s+',
+]
+NL_PIPE_PATTERN = re.compile("|".join(NL_PIPE_INDICATORS), re.IGNORECASE)
 
 
 def _is_token_covered(token, processed_char_indices):
@@ -120,33 +126,29 @@ def _is_token_covered(token, processed_char_indices):
             covered_count += 1
     return covered_count > (len(token.text) * 0.5)
 
-def _is_valid_start_of_entity_phrase(token_lower):
-    """A token can START a phrase if it's not a COMMAND_VERB (unless path-like)
-       AND it's generally valid for a phrase component."""
-    is_command_verb_like = token_lower in COMMAND_VERBS and \
-                           not (any(c in token_lower for c in './\\0123456789') or token_lower in ['..', '~'])
-    return not is_command_verb_like and \
+def _is_valid_start_of_entity_phrase(token_lower, token_text):
+    is_command_verb_strict = token_lower in COMMAND_VERBS and \
+                           not (any(c in token_text for c in './\\0123456789') or token_text in ['..', '~'])
+    return not is_command_verb_strict and \
            (token_lower not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING or \
-            any(c in token_lower for c in './\\0123456789') or \
-            token_lower in ['..', '~'] or token_lower in ARG_SPLIT_KEYWORDS)
+            any(c in token_text for c in './\\0123456789') or \
+            token_text in ['..', '~'] or token_lower in ARG_SPLIT_KEYWORDS)
 
-def _is_valid_continuation_of_entity_phrase(token_lower):
-    """A token can CONTINUE a phrase if it's not a general ignore word (but can be a split keyword)
-       OR it's path-like/numeric."""
+def _is_valid_continuation_of_entity_phrase(token_lower, token_text):
+    if token_lower in ARG_SPLIT_KEYWORDS: return True
     return token_lower not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING or \
-           any(c in token_lower for c in './\\0123456789') or \
-           token_lower in ['..', '~'] or token_lower in ARG_SPLIT_KEYWORDS
-
+           any(c in token_text for c in './\\0123456789') or \
+           token_text in ['..', '~']
 
 def extract_relevant_entities(doc, text_for_extraction):
     entities_with_spans = []
     processed_char_indices = [False] * len(text_for_extraction)
+    doc_tokens = list(doc) # doc is now created from text_for_extraction only
 
     def mark_processed(start, end):
         for i in range(start, end):
             if 0 <= i < len(processed_char_indices): processed_char_indices[i] = True
 
-    # Strategy 1: Regex for Paths and Quoted Strings
     path_pattern = r"([\"'])(.+?)\1|((?:~|\.\.|\.)?/(?:[a-zA-Z0-9_./\- ]|\\ )+/?)|([a-zA-Z0-9_.-]+\.[a-zA-Z0-9_.-]+)|(\.\.)|([a-zA-Z0-9_-]+(?:[/\\].*)?)"
     for match in re.finditer(path_pattern, text_for_extraction):
         entity_text = match.group(2) or match.group(3) or match.group(4) or match.group(5) or match.group(6)
@@ -161,29 +163,24 @@ def extract_relevant_entities(doc, text_for_extraction):
                     entities_with_spans.append((entity_text, (start, end)))
                     mark_processed(start, end)
 
-    # Strategy 2: spaCy Token Iteration for Remaining Text
     current_phrase_tokens_text = []
     current_phrase_start_char = -1
-
-    for token in doc:
+    for token in doc_tokens: # doc_tokens are from the specific segment's doc
         is_covered_by_regex = _is_token_covered(token, processed_char_indices)
-
         if not is_covered_by_regex and not token.is_punct:
             token_lower = token.lower_
-            if not current_phrase_tokens_text: # Potential start of a new phrase
-                if _is_valid_start_of_entity_phrase(token_lower):
+            token_text = token.text
+            if not current_phrase_tokens_text:
+                if _is_valid_start_of_entity_phrase(token_lower, token_text):
                     current_phrase_start_char = token.idx
-                    current_phrase_tokens_text.append(token.text)
-                else: # Not a valid start, mark as processed if it's an ignore word
-                    if token_lower in ENTITY_IGNORE_WORDS: mark_processed(token.idx, token.idx + len(token.text))
-
-            elif _is_valid_continuation_of_entity_phrase(token_lower): # Continue existing phrase
-                current_phrase_tokens_text.append(token.text)
-
-            else: # Current token breaks the phrase
+                    current_phrase_tokens_text.append(token_text)
+                else:
+                    if token_lower in ENTITY_IGNORE_WORDS: mark_processed(token.idx, token.idx + len(token_text))
+            elif _is_valid_continuation_of_entity_phrase(token_lower, token_text):
+                current_phrase_tokens_text.append(token_text)
+            else:
                 if current_phrase_tokens_text:
                     entity_text = " ".join(current_phrase_tokens_text).strip()
-                    # No need for _clean_entity_phrase if construction is stricter
                     if entity_text:
                         phrase_end_char = token.idx
                         if not any(entity_text == et for et, _ in entities_with_spans):
@@ -191,10 +188,11 @@ def extract_relevant_entities(doc, text_for_extraction):
                             mark_processed(current_phrase_start_char, phrase_end_char)
                     current_phrase_tokens_text = []
                     current_phrase_start_char = -1
-                # Mark the breaking ignore word as processed
                 if token_lower in ENTITY_IGNORE_WORDS: mark_processed(token.idx, token.idx + len(token.text))
-
-        elif current_phrase_tokens_text: # Token is covered by regex or is punctuation, finalize phrase
+                elif _is_valid_start_of_entity_phrase(token_lower, token_text):
+                    current_phrase_start_char = token.idx
+                    current_phrase_tokens_text.append(token_text)
+        elif current_phrase_tokens_text:
             entity_text = " ".join(current_phrase_tokens_text).strip()
             if entity_text:
                 phrase_end_char = token.idx
@@ -204,9 +202,7 @@ def extract_relevant_entities(doc, text_for_extraction):
             current_phrase_tokens_text = []
             current_phrase_start_char = -1
             if is_covered_by_regex: mark_processed(token.idx, token.idx + len(token.text))
-
-
-    if current_phrase_tokens_text: # Adds any remaining phrase
+    if current_phrase_tokens_text:
         entity_text = " ".join(current_phrase_tokens_text).strip()
         if entity_text:
             phrase_end_char = len(text_for_extraction)
@@ -217,305 +213,319 @@ def extract_relevant_entities(doc, text_for_extraction):
 
     entities_with_spans.sort(key=lambda x: x[1][0])
     current_entities_text = [entity_tuple[0] for entity_tuple in entities_with_spans if entity_tuple[0]]
-
-    # Strategy 3: Final Filtering
     final_filtered_entities = []
     fuzzy_check_list_args = ['folder', 'directory', 'file']
-
     for entity in current_entities_text:
         entity_lower = entity.lower()
         is_path_like_or_num_or_long = ('.' in entity or '/' in entity or '\\' in entity or entity in ['..','~'] or any(char.isdigit() for char in entity) or len(entity)>3)
-
-        # Filter exact command verbs if not clearly an argument AND not an ARG_SPLIT_KEYWORD
         if entity_lower in COMMAND_VERBS and not is_path_like_or_num_or_long and entity_lower not in ARG_SPLIT_KEYWORDS:
             print(f"Debug EntityExtract: Final filter (exact verb): '{entity}'")
             continue
-
-        # Filter general ignore words (that are not split keywords) if not path-like etc.
-        # This is a bit redundant if token iteration is good, but acts as a safeguard.
         if entity_lower in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING and not is_path_like_or_num_or_long:
-            if not entity.isdigit(): # Allow numbers
+            if not entity.isdigit():
                 print(f"Debug EntityExtract: Final filter (exact ignore word): '{entity}'")
                 continue
-
         is_fuzzy_keyword = False
-        for keyword in fuzzy_check_list_args: # Only check against 'folder', 'directory', 'file'
-            if fuzz.ratio(entity_lower, keyword) > ENTITY_FILTER_FUZZY_THRESHOLD + 2: # 90
-                 looks_like_arg_f = (any(char.isdigit() for char in entity) or
-                                  '/' in entity or '\\' in entity or
-                                  '.' in entity or entity in ['..', '~'])
-                 if not looks_like_arg_f: # Only filter if it doesn't look like an arg
+        for keyword in fuzzy_check_list_args:
+            if fuzz.ratio(entity_lower, keyword) > ENTITY_FILTER_FUZZY_THRESHOLD + 2:
+                 looks_like_arg_f = (any(char.isdigit() for char in entity) or '/' in entity or '\\' in entity or '.' in entity or entity in ['..', '~'])
+                 if not looks_like_arg_f:
                       is_fuzzy_keyword = True
                       print(f"Debug EntityExtract: Filtered (fuzzy) non-arg entity '{entity}' similar to '{keyword}'")
                       break
         if is_fuzzy_keyword: continue
-
-        if entity: # Ensure entity is not empty
-            final_filtered_entities.append(entity)
-
+        if entity: final_filtered_entities.append(entity)
     seen = set()
     unique_entities = [x for x in final_filtered_entities if not (x in seen or seen.add(x))]
     print(f"Debug: Extracted entities (final): {unique_entities}")
     return unique_entities
 
-
 def select_primary_argument(args_list, action_id=None):
     if not args_list: return None
-
-    # Use the comprehensive ENTITY_IGNORE_WORDS but exclude ARG_SPLIT_KEYWORDS
-    # because we want to select a primary argument, not a separator.
     selection_ignore_words = ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS
-
     candidate_args = [arg for arg in args_list if arg.lower() not in ARG_SPLIT_KEYWORDS]
-    if not candidate_args: # If only split keywords were passed, that's an issue.
-        if args_list : print(f"Debug select_primary_argument: Only split keywords found in {args_list}, returning None.")
+    if not candidate_args:
+        if args_list : print(f"Debug select_primary_argument: Only split keywords found in {args_list}, returning None for primary.")
         return None
-
-
-    # 1. Prefer entities that look like paths or filenames or contain digits
     for arg_candidate in reversed(candidate_args):
         arg_cand_lower = arg_candidate.lower()
         is_path_like = '/' in arg_candidate or '\\' in arg_candidate or arg_candidate in ['..', '~']
         has_extension = '.' in arg_candidate and not arg_candidate.startswith('.')
         has_digits = any(c.isdigit() for c in arg_candidate)
-
-        if is_path_like or has_extension or has_digits:
-            # If it looks like a path/file/digit, it's a strong candidate, even if it's an ignore word
-            # (e.g. folder named "new", file named "file.txt")
-            print(f"Debug select_primary_argument: Selected path/file/digit-like '{arg_candidate}' from {candidate_args}")
+        if arg_cand_lower not in selection_ignore_words:
+            print(f"Debug select_primary_argument: Selected '{arg_candidate}' (not in strict_ignore_selection)")
             return arg_candidate
-
-    # 2. If no clear path/file, select the last non-ignore word
-    for arg_candidate in reversed(candidate_args):
-        if arg_candidate.lower() not in selection_ignore_words:
-            print(f"Debug select_primary_argument: Selected last non-ignore word '{arg_candidate}' from {candidate_args}")
+        elif is_path_like or has_extension or has_digits:
+            print(f"Debug select_primary_argument: Selected '{arg_candidate}' (is ignore_word but path/file/digit-like)")
             return arg_candidate
-
-    # 3. Fallback: if all were ignore words (after filtering split keywords), but list was not empty initially.
     if candidate_args:
         last_candidate_arg = candidate_args[-1].strip()
         if last_candidate_arg:
             print(f"Debug select_primary_argument: Fallback, selected last candidate arg '{last_candidate_arg}'")
             return last_candidate_arg
-
     print(f"Debug select_primary_argument: No suitable primary argument found in {args_list}")
     return None
 
 
+def _parse_single_command_segment(text_segment, is_part_of_pipe=False): # Added flag
+    """
+    Parses a single command segment.
+    Returns a dictionary like {'action': '...', 'args': [...]} or error/suggest structures.
+    """
+    text_lower_segment = text_segment.lower().strip()
+    if not text_lower_segment: return None
+
+    action_id, initial_args_str_segment, parsed_args = None, "", []
+    suggestion_action_id, suggestion_phrase = None, None
+    match_result, score, matched_direct = None, 0, False
+    cmd_prefix_for_fallback_msg = ""
+
+    # 0. Direct Command Check for this segment
+    direct_commands = {
+        'cd ': 'change_directory', 'ls': 'list_files', 'pwd': 'show_path',
+        'rm ': 'delete_file', 'rmdir ': 'delete_directory', 'mkdir ': 'make_directory',
+        'mv ': 'move_rename', 'cp ': 'copy_file', 'cat ': 'display_file',
+        'touch ': 'create_file', 'whoami': 'whoami', 'df': 'disk_usage',
+        'free': 'memory_usage', 'ps': 'show_processes', 'git status': 'git_status',
+        'git init': 'git_init', 'git commit ': 'git_commit', 'grep ': 'grep',
+    }
+    for cmd_prefix, mapped_action in direct_commands.items():
+        if text_lower_segment.startswith(cmd_prefix):
+            if not cmd_prefix.endswith(' ') and text_lower_segment != cmd_prefix: continue
+            print(f"Debug (Segment): Direct command prefix match for '{cmd_prefix}'")
+            action_id = mapped_action
+            initial_args_str_segment = text_segment[len(cmd_prefix):].strip()
+            matched_direct = True
+            if action_id == 'git_commit': cmd_prefix_for_fallback_msg = cmd_prefix.strip()
+            break
+
+    # 1. Intent Recognition (Fuzzy Match - Only if no direct match)
+    if not matched_direct:
+        match_result = process.extractOne(
+            text_lower_segment, ACTION_KEYWORDS.keys(),
+            scorer=fuzz.WRatio, score_cutoff=FUZZY_MATCH_THRESHOLD_SUGGEST
+        )
+        if match_result:
+            matched_phrase, score, _ = match_result
+            print(f"Debug (Segment): Fuzzy match: phrase='{matched_phrase}', score={score}")
+            if score >= FUZZY_MATCH_THRESHOLD_EXECUTE:
+                action_id = ACTION_KEYWORDS[matched_phrase]
+                print(f"Debug (Segment): Matched action '{action_id}' via fuzzy.")
+            elif score >= FUZZY_MATCH_THRESHOLD_SUGGEST:
+                suggestion_action_id = ACTION_KEYWORDS[matched_phrase]
+                suggestion_phrase = matched_phrase
+                print(f"Debug (Segment): Potential suggestion: action='{suggestion_action_id}' (phrase='{suggestion_phrase}')")
+
+    # Determine Best Guess Action & Extract Entities
+    current_action_guess = action_id if action_id else suggestion_action_id
+    if current_action_guess is None:
+        print(f"Debug (Segment): No good match found for '{text_lower_segment}'")
+        return {'action': 'unrecognized_segment', 'segment_text': text_segment}
+
+    # Create spaCy doc only for the current segment text
+    doc_for_extraction = nlp(text_segment) # Use text_segment for both doc and text_for_extraction
+    args = extract_relevant_entities(doc_for_extraction, text_segment)
+    print(f"Debug (Segment): Args after extraction, before refinement: {args}")
+
+    # 3. Heuristics & Action Overrides
+    if current_action_guess in ['list_files', 'show_path'] and len(args) == 1:
+        filename_pattern = r"\.[a-zA-Z0-9]+$"
+        arg_check = args[0]
+        if (re.search(filename_pattern, arg_check) or '.' in arg_check) and arg_check not in ['.', '..']:
+            print(f"Debug (Segment): Heuristic override! Action '{current_action_guess}' changed to 'display_file'.")
+            action_id = 'display_file'; suggestion_action_id = None; suggestion_phrase = None
+
+    # If after heuristic, action_id is set, it's a direct match for this segment.
+    # If action_id is still None, but suggestion_action_id exists, return suggestion for this segment.
+    if action_id is None:
+        if suggestion_action_id is not None:
+            return {'action': 'suggest_segment',
+                    'suggestion_action_id': suggestion_action_id,
+                    'suggestion_phrase': suggestion_phrase,
+                    'args': args} # Pass current args
+        else:
+             print(f"Debug (Segment): No action identified for '{text_lower_segment}'.")
+             return {'action': 'unrecognized_segment', 'segment_text': text_segment}
+
+    # If we have a definite final action_id for this segment
+    if action_id == 'change_directory':
+        if any(phrase in text_segment.lower() for phrase in ["up one level", "go back", "ek level peeche jao", "wapas jao"]):
+             print("Debug (Segment): Heuristic: Interpreted 'go up/back' as 'cd ..'"); args = ['..']
+
+    # 4. Argument Refinement based on Final Action
+    parsed_args = []
+    if action_id in ['make_directory', 'create_file', 'delete_file', 'delete_directory', 'display_file', 'grep']:
+        selected_arg = select_primary_argument(args, action_id)
+        if selected_arg: parsed_args = [selected_arg]
+        if action_id == 'grep':
+             if len(args) > 1: # If there were more entities extracted
+                 non_ignore_args = [arg for arg in args if arg.lower() not in ENTITY_IGNORE_WORDS or any(c in arg for c in './\\0123456789') or arg in ['..', '~']]
+                 if non_ignore_args: parsed_args = non_ignore_args
+                 elif args: parsed_args = args # fallback to all extracted args
+                 if not parsed_args: print(f"Warning: Grep might need more arguments. Found in segment: {args}")
+             elif not selected_arg and not is_part_of_pipe : # If not part of pipe, grep needs a pattern
+                 print(f"Warning: Action '{action_id}' requires an argument, none suitable in {args}.")
+                 parsed_args = []
+            # If it is part of a pipe, grep might not have explicit file args, using stdin.
+
+        elif not selected_arg and action_id != 'grep':
+            print(f"Warning: Action '{action_id}' requires an argument, none suitable in {args}."); parsed_args = []
+
+    elif action_id == 'change_directory':
+         selected_arg = select_primary_argument(args, action_id)
+         if selected_arg:
+              home_path_variants = {'home', '~', 'ghar'}; actual_home_for_comp = os.path.expanduser("~")
+              if selected_arg.lower() in home_path_variants or selected_arg == actual_home_for_comp or selected_arg == '~': parsed_args = ['~']
+              elif selected_arg == '..': parsed_args = ['..']
+              else: parsed_args = [selected_arg]
+         else: parsed_args = []
+
+    elif action_id == 'move_rename' or action_id == 'copy_file':
+        source, destination = None, None; candidate_args = list(args)
+        if matched_direct and initial_args_str_segment and (' ' in initial_args_str_segment or '\t' in initial_args_str_segment):
+            if len(candidate_args) < 2 or not all(s.strip() for s in candidate_args):
+                try:
+                    shlex_args = [s for s in shlex.split(initial_args_str_segment) if s]
+                    if len(shlex_args) >= 2 : candidate_args = shlex_args; print(f"Debug (Segment): Using shlex-split args for mv/cp: {candidate_args}")
+                except: pass
+
+        clean_cand_args = [arg for arg in candidate_args if arg.lower() not in (ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS) or any(c in arg for c in './\\0123456789') or arg in ['..', '~']]
+        if not clean_cand_args and candidate_args: clean_cand_args = candidate_args
+
+        if len(clean_cand_args) >= 2:
+            split_found = False
+            for i in range(len(clean_cand_args) - 2, 0, -1):
+                if clean_cand_args[i].lower() in ARG_SPLIT_KEYWORDS:
+                     source_list = clean_cand_args[:i]; dest_list = clean_cand_args[i+1:]
+                     source = select_primary_argument(source_list, action_id); destination = select_primary_argument(dest_list, action_id)
+                     if source and destination: split_found = True; print(f"Debug (Segment): Split mv/cp args by keyword '{clean_cand_args[i]}': S='{source}', D='{destination}'"); break
+            if not split_found:
+                arg1 = select_primary_argument(clean_cand_args); temp_remaining = list(clean_cand_args)
+                if arg1 in temp_remaining: temp_remaining.remove(arg1)
+                arg2 = select_primary_argument(temp_remaining)
+                if arg1 and arg2:
+                    try:
+                        idx1 = clean_cand_args.index(arg1); idx2 = clean_cand_args.index(arg2)
+                        if idx1 < idx2: source, destination = arg1, arg2
+                        else: source, destination = arg2, arg1
+                    except ValueError: source, destination = arg1, arg2
+                elif arg1: source = arg1
+                print(f"Debug (Segment): Split mv/cp args by position: S='{source}', D='{destination}'")
+            if source and destination: parsed_args = [source, destination]
+            elif source: print(f"Warning: '{action_id}' requires S/D. Only source '{source}' found. Cand Args: {clean_cand_args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
+            else: print(f"Warning: Could not determine S/D for '{action_id}'. Cand Args: {clean_cand_args}"); parsed_args = clean_cand_args[:2] if len(clean_cand_args) >=2 else clean_cand_args
+        elif len(clean_cand_args) == 1: print(f"Warning: '{action_id}' requires S/D. Only one candidate: {clean_cand_args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
+        else: print(f"Warning: '{action_id}' requires S/D. No candidate args from {args}."); return {'action': 'error', 'message': f"Missing args for {action_id}"}
+
+    elif action_id == 'git_commit':
+        msg_match = re.search(r"(?:-m|message)\s+([\"'])(.+?)\1", text_segment, re.IGNORECASE) # Use text_segment
+        if msg_match:
+            parsed_args = ["-m", msg_match.group(2)]
+        else:
+            fallback_msg = ""
+            # Fallback using text after the matched phrase from this segment's text
+            phrase_that_matched_segment = cmd_prefix_for_fallback_msg if matched_direct and cmd_prefix_for_fallback_msg else (matched_phrase if match_result else None)
+            if phrase_that_matched_segment:
+                 try:
+                     phrase_lower = phrase_that_matched_segment.lower()
+                     indices = [m.start() for m in re.finditer(re.escape(phrase_lower), text_lower_segment)]
+                     if indices: start_index = indices[-1] + len(phrase_that_matched_segment); fallback_msg = text_segment[start_index:].strip().strip("'\"")
+                 except Exception as e: print(f"Debug (Segment): Error finding fallback commit msg: {e}")
+
+            if fallback_msg:
+                 print(f"Warning: Commit message flag not found. Using text after command: '{fallback_msg}'")
+                 parsed_args = ["-m", fallback_msg]
+            elif args : # If no -m, and args were extracted from this segment
+                commit_msg_parts = [arg for arg in args if arg.lower() not in (ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS) or len(arg)>1 or any(c in arg for c in './\\0123456789')]
+                if not commit_msg_parts and args: commit_msg_parts = args
+                if commit_msg_parts:
+                    fallback_msg = " ".join(commit_msg_parts)
+                    print(f"Warning: Commit message flag not found. Using remaining extracted args: '{fallback_msg}'")
+                    parsed_args = ["-m", fallback_msg]
+                else: print("Error: Commit message required."); return {'action': 'error', 'message': 'Commit message required'}
+            else: print("Error: Commit message required."); return {'action': 'error', 'message': 'Commit message required'}
+
+    elif action_id in ['list_files', 'show_path', 'whoami', 'git_status', 'git_init', 'show_processes', 'disk_usage', 'memory_usage']:
+         if args: print(f"Debug (Segment): Action '{action_id}' doesn't take arguments, ignoring extracted: {args}")
+         parsed_args = []
+    else:
+         parsed_args = args
+
+    return {'action': action_id, 'args': parsed_args}
+
+
 def parse_input(text):
     """
-    Parses natural language input (Eng/Hinglish) into a structured command dictionary.
+    Main parser function. Detects pipes and calls segment parser.
     """
     try:
         original_text = text
-        text_lower = text.lower().strip()
-        if not text_lower: return None
+        pipe_segments_raw = []
 
-        action_id, initial_args_str, parsed_args = None, "", []
-        suggestion_action_id, suggestion_phrase = None, None
-        match_result, score, matched_direct = None, 0, False
-        cmd_prefix_for_fallback_msg = ""
-
-        # 0. Direct Command Check
-        direct_commands = {
-            'cd ': 'change_directory', 'ls': 'list_files', 'pwd': 'show_path',
-            'rm ': 'delete_file', 'rmdir ': 'delete_directory', 'mkdir ': 'make_directory',
-            'mv ': 'move_rename', 'cp ': 'copy_file', 'cat ': 'display_file',
-            'touch ': 'create_file', 'whoami': 'whoami', 'df': 'disk_usage',
-            'free': 'memory_usage', 'ps': 'show_processes', 'git status': 'git_status',
-            'git init': 'git_init', 'git commit ': 'git_commit'
-        }
-        for cmd_prefix, mapped_action in direct_commands.items():
-            if text_lower.startswith(cmd_prefix):
-                if not cmd_prefix.endswith(' ') and text_lower != cmd_prefix: continue
-                print(f"Debug: Direct command prefix match for '{cmd_prefix}'")
-                action_id = mapped_action
-                initial_args_str = original_text[len(cmd_prefix):].strip()
-                matched_direct = True
-                if action_id == 'git_commit': cmd_prefix_for_fallback_msg = cmd_prefix.strip()
-                break
-
-        # 1. Intent Recognition (Fuzzy Match - Only if no direct match)
-        if not matched_direct:
-            match_result = process.extractOne(
-                text_lower, ACTION_KEYWORDS.keys(),
-                scorer=fuzz.WRatio, score_cutoff=FUZZY_MATCH_THRESHOLD_SUGGEST
-            )
-            if match_result:
-                matched_phrase, score, _ = match_result
-                print(f"Debug: Fuzzy match: phrase='{matched_phrase}', score={score}")
-                if score >= FUZZY_MATCH_THRESHOLD_EXECUTE:
-                    action_id = ACTION_KEYWORDS[matched_phrase]
-                    print(f"Debug: Matched action '{action_id}' via fuzzy.")
-                elif score >= FUZZY_MATCH_THRESHOLD_SUGGEST:
-                    suggestion_action_id = ACTION_KEYWORDS[matched_phrase]
-                    suggestion_phrase = matched_phrase
-                    print(f"Debug: Potential suggestion: action='{suggestion_action_id}' (phrase='{suggestion_phrase}')")
-
-        # Determine Best Guess Action & Extract Entities
-        current_action_guess = action_id if action_id else suggestion_action_id
-        if current_action_guess is None:
-            print(f"Debug: No good match found for '{text_lower}'")
-            return {'action': 'unrecognized'}
-
-        doc = nlp(original_text)
-        text_to_extract_from = initial_args_str if matched_direct and initial_args_str else original_text
-        doc_for_extraction = nlp(text_to_extract_from)
-
-        args = extract_relevant_entities(doc_for_extraction, text_to_extract_from)
-        print(f"Debug: Args after extraction, before refinement: {args}")
-
-        # 3. Heuristics & Action Overrides
-        if current_action_guess in ['list_files', 'show_path'] and len(args) == 1:
-            filename_pattern = r"\.[a-zA-Z0-9]+$"
-            arg_check = args[0]
-            if (re.search(filename_pattern, arg_check) or '.' in arg_check) and arg_check not in ['.', '..']:
-                print(f"Debug: Heuristic override! Action '{current_action_guess}' changed to 'display_file' due to filename arg '{arg_check}'.")
-                action_id = 'display_file'; suggestion_action_id = None; suggestion_phrase = None
-
-        if action_id is None:
-            if suggestion_action_id is not None:
-                return {'action': 'suggest', 'suggestion_action_id': suggestion_action_id, 'suggestion_phrase': suggestion_phrase}
+        # splitting by NL pipe phrases first (more complex)
+        nl_pipe_match = NL_PIPE_PATTERN.search(original_text)
+        if nl_pipe_match:
+            print(f"Debug: NL Pipe detected with '{nl_pipe_match.group(0).strip()}'")
+            # Split only on the first found NL pipe phrase to handle A and then B and then C
+            first_segment = original_text[:nl_pipe_match.start()].strip()
+            remaining_after_nl_pipe = original_text[nl_pipe_match.end():].strip()
+            pipe_segments_raw.append(first_segment)
+            # Check if remaining part also contains pipes (literal or NL)
+            # This makes it recursive for the part after the first NL pipe
+            if NL_PIPE_PATTERN.search(remaining_after_nl_pipe) or '|' in remaining_after_nl_pipe:
+                 pipe_segments_raw.append(remaining_after_nl_pipe) # Simplification for now
             else:
-                 print(f"Debug: No action identified for '{text_lower}' after all checks.")
+                 pipe_segments_raw.append(remaining_after_nl_pipe)
+
+        elif '|' in original_text: # Fallback to literal pipe
+            print(f"Debug: Literal Pipe '|' detected.")
+            pipe_segments_raw = original_text.split('|')
+        else: # No pipe
+            pipe_segments_raw = [original_text]
+
+        pipe_segments = [s.strip() for s in pipe_segments_raw if s.strip()]
+
+        if len(pipe_segments) > 1:
+            parsed_commands_list = []
+            for i, segment_text in enumerate(pipe_segments):
+                # Each segment is parsed as if it's a standalone command for entity extraction purposes
+                segment_result = _parse_single_command_segment(segment_text, segment_text) # Pass segment as its own context
+
+                if segment_result and segment_result.get('action') == 'suggest_segment':
+                    print(f"Debug: Suggestion within pipe segment ('{segment_result.get('suggestion_phrase')}'). Pipelining suggestions not yet supported.")
+                    return {'action': 'error', 'message': f"Ambiguous command '{segment_result.get('suggestion_phrase')}' within a pipe. Please clarify."}
+
+                if not segment_result or segment_result.get('action') in ['unrecognized_segment', 'error']:
+                    error_msg = segment_result.get('message', "Unknown error") if segment_result else "Unknown error"
+                    segment_err_text = segment_result.get('segment_text', segment_text) if segment_result else segment_text
+                    print(f"Error parsing pipe segment '{segment_err_text}': {error_msg}")
+                    return {'action': 'error', 'message': f"Error in piped command segment: '{segment_err_text}' - {error_msg}"}
+
+                # For grep as second command in pipe, if it has no args, assume it takes stdin
+                if i > 0 and segment_result['action'] == 'grep' and not segment_result['args']:
+                    print("Debug: Grep in pipe with no args, assuming stdin.")
+                    # No change needed for args, executor handles empty args for grep with pipe
+
+                parsed_commands_list.append({'action': segment_result['action'], 'args': segment_result['args']})
+
+            if parsed_commands_list:
+                return {'type': 'piped_commands', 'commands': parsed_commands_list}
+            else:
+                return {'action': 'error', 'message': 'Failed to parse piped command'}
+
+        else: # No pipe detected or only one segment after split
+            # For single commands, original_text is the full context
+            single_result = _parse_single_command_segment(original_text, original_text)
+            if single_result and single_result.get('action') == 'suggest_segment':
+                return {'action': 'suggest',
+                        'suggestion_action_id': single_result.get('suggestion_action_id'),
+                        'suggestion_phrase': single_result.get('suggestion_phrase')}
+            elif single_result and single_result.get('action') == 'unrecognized_segment':
                  return {'action': 'unrecognized'}
-
-        # If we have a definite final action_id
-        if action_id == 'change_directory':
-            if any(phrase in text_lower for phrase in ["up one level", "go back", "ek level peeche jao", "wapas jao"]):
-                 print("Debug: Heuristic: Interpreted 'go up/back' as 'cd ..'"); args = ['..']
-
-        # 4. Argument Refinement based on Final Action
-        parsed_args = []
-        if action_id in ['make_directory', 'create_file', 'delete_file', 'delete_directory', 'display_file']:
-            selected_arg = select_primary_argument(args, action_id)
-            if selected_arg: parsed_args = [selected_arg]
-            else: print(f"Warning: Action '{action_id}' requires an argument, none suitable in {args}."); parsed_args = []
-
-        elif action_id == 'change_directory':
-             selected_arg = select_primary_argument(args, action_id)
-             if selected_arg:
-                  home_path_variants = {'home', '~', 'ghar'}
-                  actual_home_for_comp = os.path.expanduser("~")
-                  if selected_arg.lower() in home_path_variants or selected_arg == actual_home_for_comp or selected_arg == '~':
-                       parsed_args = ['~']
-                  elif selected_arg == '..': parsed_args = ['..']
-                  else: parsed_args = [selected_arg]
-             else: parsed_args = []
-
-        elif action_id == 'move_rename' or action_id == 'copy_file':
-            source, destination = None, None
-            candidate_args = list(args) # Start with the (hopefully) cleaner list
-
-            # If direct match and initial_args_str was complex, and extract_relevant_entities
-            # didn't give at least two args, try shlex on original direct string.
-            if matched_direct and initial_args_str and (' ' in initial_args_str or '\t' in initial_args_str):
-                if len(candidate_args) < 2 or not all(s.strip() for s in candidate_args):
-                    try:
-                        shlex_args = [s for s in shlex.split(initial_args_str) if s]
-                        if len(shlex_args) >= 2 :
-                            candidate_args = shlex_args # Use shlexed args
-                            print(f"Debug: Using shlex-split args for mv/cp: {candidate_args}")
-                    except: pass
-
-            # Now, candidate_args should be the best list of potential arguments
-            # ARG_SPLIT_KEYWORDS should be preserved by extract_relevant_entities if between valid args.
-            if len(candidate_args) >= 2:
-                split_found = False
-                # Finds the last split keyword BETWEEN potential args
-                for i in range(len(candidate_args) - 2, 0, -1):
-                    if candidate_args[i].lower() in ARG_SPLIT_KEYWORDS:
-                         # Select primary arguments from the sub-lists
-                         source_list = candidate_args[:i]
-                         dest_list = candidate_args[i+1:]
-
-                         temp_source = select_primary_argument(source_list, action_id)
-                         temp_destination = select_primary_argument(dest_list, action_id)
-
-                         if temp_source and temp_destination:
-                              source = temp_source; destination = temp_destination
-                              split_found = True
-                              print(f"Debug: Split mv/cp args by keyword '{candidate_args[i]}': S='{source}', D='{destination}'")
-                              break
-                if not split_found: # Fallback to positional
-                    # Select two "best" arguments if no split keyword found
-                    arg1 = select_primary_argument(candidate_args)
-                    temp_remaining = list(candidate_args)
-                    if arg1 in temp_remaining: temp_remaining.remove(arg1)
-                    arg2 = select_primary_argument(temp_remaining)
-
-                    if arg1 and arg2:
-                        # Determine order based on original position in candidate_args
-                        try:
-                            if candidate_args.index(arg1) < candidate_args.index(arg2):
-                                source = arg1; destination = arg2
-                            else:
-                                source = arg2; destination = arg1
-                        except ValueError: source = arg1; destination = arg2 # Default order
-                    elif arg1: # Only one good argument found, assume it's source
-                        source = arg1
-                        print(f"Debug mv/cp: Only one primary arg found '{arg1}', assuming source.")
-                    else: # Fallback if selection fails
-                        if len(candidate_args) >= 2:
-                            source = candidate_args[0]; destination = " ".join(candidate_args[1:])
-                        elif candidate_args:
-                            source = candidate_args[0]
-                    print(f"Debug: Split mv/cp args by position from candidates: S='{source}', D='{destination}'")
-
-
-                if source and destination: parsed_args = [source, destination]
-                elif source and not destination: # Only source found, error
-                     print(f"Warning: '{action_id}' requires S/D. Only source '{source}' found. Cand Args: {candidate_args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
-                else:
-                     print(f"Warning: Could not determine S/D for '{action_id}'. Candidate Args: {candidate_args}");
-                     if len(candidate_args) >=2: parsed_args = candidate_args[:2]
-                     elif candidate_args: parsed_args = candidate_args
-                     else: parsed_args = []
-            elif len(candidate_args) == 1: print(f"Warning: '{action_id}' requires S/D. Only one candidate: {candidate_args}"); return {'action': 'error', 'message': f"Missing destination for {action_id}"}
-            else: print(f"Warning: '{action_id}' requires S/D. No candidate args from {args}."); return {'action': 'error', 'message': f"Missing args for {action_id}"}
-
-        elif action_id == 'git_commit':
-            msg_match = re.search(r"(?:-m|message)\s+([\"'])(.+?)\1", original_text, re.IGNORECASE)
-            if msg_match:
-                parsed_args = ["-m", msg_match.group(2)]
-            else:
-                fallback_msg = ""
-                phrase_that_matched = cmd_prefix_for_fallback_msg if matched_direct and cmd_prefix_for_fallback_msg else (matched_phrase if match_result else None)
-                if phrase_that_matched:
-                     try:
-                         phrase_lower = phrase_that_matched.lower()
-                         indices = [m.start() for m in re.finditer(re.escape(phrase_lower), text_lower)]
-                         if indices: start_index = indices[-1] + len(phrase_that_matched); fallback_msg = original_text[start_index:].strip().strip("'\"")
-                     except Exception as e: print(f"Debug: Error finding fallback commit msg: {e}")
-
-                if fallback_msg:
-                     print(f"Warning: Commit message flag not found. Using text after command: '{fallback_msg}'")
-                     parsed_args = ["-m", fallback_msg]
-                elif args :
-                    commit_msg_parts = [arg for arg in args if arg.lower() not in (ENTITY_IGNORE_WORDS - ARG_SPLIT_KEYWORDS) or len(arg)>1 or any(c in arg for c in './\\0123456789')]
-                    if not commit_msg_parts and args: commit_msg_parts = args
-                    if commit_msg_parts:
-                        fallback_msg = " ".join(commit_msg_parts)
-                        print(f"Warning: Commit message flag not found. Using remaining extracted args: '{fallback_msg}'")
-                        parsed_args = ["-m", fallback_msg]
-                    else: print("Error: Commit message required."); return {'action': 'error', 'message': 'Commit message required'}
-                else: print("Error: Commit message required."); return {'action': 'error', 'message': 'Commit message required'}
-
-        elif action_id in ['list_files', 'show_path', 'whoami', 'git_status', 'git_init', 'show_processes', 'disk_usage', 'memory_usage']:
-             if args: print(f"Debug: Action '{action_id}' doesn't take arguments, ignoring extracted: {args}")
-             parsed_args = []
-        else:
-             parsed_args = args
-             if args: print(f"Debug: Passing arguments {args} to unhandled action '{action_id}'")
-
-        # 5. Return Structured Command
-        return {
-            'action': action_id,
-            'args': parsed_args
-        }
+            return single_result
 
     except Exception as e:
-         print(f"❌❌❌ PARSER FUNCTION CRASHED! ❌❌❌")
+         print(f"❌❌❌ TOP LEVEL PARSER FUNCTION CRASHED! ❌❌❌")
          print(f"Input Text: '{text}'")
          print(f"Error Type: {type(e).__name__}")
          print(f"Error Details: {e}")
