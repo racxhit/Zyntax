@@ -4,7 +4,7 @@ Description: Contains functions to parse natural language inputs and convert the
              into structured command representations (intents and targets).
              Includes entity extraction, filtering, argument refinement, and pipelining.
 Date Created: 05-04-2025
-Last Updated: 19-05-2025 # Refactor 27: NL Pipe Entity Fix
+Last Updated: 27-05-2025
 """
 
 import re
@@ -104,7 +104,7 @@ ENTITY_IGNORE_WORDS = (
      'from', 'a', 'the', 'in', 'on', 'at', 'me', 'my', 'please', 'using',
      'via', 'of', 'contents', 'empty', 'new', 'working', 'one', 'level', 'up',
      'current', 'everything', 'here', 'this', 'all', 'running', 'now', 'is',
-     'are', 'system', 'location', 'arguments', 'mein', 'text'} |
+     'are', 'system', 'location', 'arguments', 'mein', 'text', 'hey',} |
     {"ka", "ki", "ke", "hai", "hoon", "ho", "kya", "mera", "meri", "mere",
      "sabhi", "sab", "ek", "agar", "toh", "phir", "yeh", "woh", "aur", "bhi",
      "abhi", "wala", "wali", "naya", "nayi", "naye", "kuch", "thoda", "pura", "sirf", "bas"}
@@ -126,13 +126,30 @@ def _is_token_covered(token, processed_char_indices):
             covered_count += 1
     return covered_count > (len(token.text) * 0.5)
 
-def _is_valid_start_of_entity_phrase(token_lower, token_text):
-    is_command_verb_strict = token_lower in COMMAND_VERBS and \
-                           not (any(c in token_text for c in './\\0123456789') or token_text in ['..', '~'])
-    return not is_command_verb_strict and \
-           (token_lower not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING or \
-            any(c in token_text for c in './\\0123456789') or \
-            token_text in ['..', '~'] or token_lower in ARG_SPLIT_KEYWORDS)
+
+def _is_valid_start_of_entity_phrase(token_lower, token_text, doc, token_idx):  # Added doc and token_idx
+    """A token can START a phrase if it's not a COMMAND_VERB (unless path-like)
+       AND it's generally valid for a phrase component."""
+
+    # Allow if it's clearly a path-like start or has digits
+    if any(c in token_text for c in './\\0123456789') or token_text in ['..', '~']:
+        # If it's just a dot, check if the next token makes it a file pattern
+        if token_text == '.' and token_idx + 1 < len(doc):
+            next_token_text = doc[token_idx + 1].text
+            if re.match(r"^[a-zA-Z0-9_]+$", next_token_text):  # e.g., .py, .txt
+                return True  # It's a valid start like ".py"
+        else:
+            return True  # It's a path like ./ or contains digits
+
+    is_command_verb_strict = token_lower in COMMAND_VERBS
+
+    # If it's a command verb, it cannot start a phrase unless it was already caught by path-like above
+    if is_command_verb_strict:
+        return False
+
+    # Allow if not an ignore word OR it's an ARG_SPLIT_KEYWORD (which are not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING)
+    return token_lower not in ENTITY_IGNORE_WORDS_FOR_PHRASE_BUILDING or \
+        token_lower in ARG_SPLIT_KEYWORDS
 
 def _is_valid_continuation_of_entity_phrase(token_lower, token_text):
     if token_lower in ARG_SPLIT_KEYWORDS: return True
@@ -165,13 +182,14 @@ def extract_relevant_entities(doc, text_for_extraction):
 
     current_phrase_tokens_text = []
     current_phrase_start_char = -1
-    for token in doc_tokens: # doc_tokens are from the specific segment's doc
+    for token_idx, token in enumerate(doc_tokens):
+        # doc_tokens are from the specific segment's doc
         is_covered_by_regex = _is_token_covered(token, processed_char_indices)
         if not is_covered_by_regex and not token.is_punct:
             token_lower = token.lower_
             token_text = token.text
             if not current_phrase_tokens_text:
-                if _is_valid_start_of_entity_phrase(token_lower, token_text):
+                if _is_valid_start_of_entity_phrase(token_lower, token_text, doc_tokens, token_idx):
                     current_phrase_start_char = token.idx
                     current_phrase_tokens_text.append(token_text)
                 else:
