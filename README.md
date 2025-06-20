@@ -1,159 +1,152 @@
-## Zyntax: A Smart NLP-Powered Terminal for System and Development Tasks
+# Zyntax: Natural Language Terminal Interface
 
-Zyntax is a natural language-powered command-line interface that lets you interact with your terminal using plain English. Forget memorizing complex shell commands and flags, just type what you want to do, and Zyntax takes care of the rest.
+**Zyntax** is an intelligent terminal interface that understands natural language commands. Skip memorizing complex command syntax across different operating systems - just tell Zyntax what you want to do in plain English or Hinglish.
 
-> ⚠️ **Status: Work In Progress / Under Active Development**  
-> Core functionality is implemented, but expect bugs and limitations.
+Zyntax bridges the gap between human language and command-line interfaces, making terminal operations accessible to everyone while maintaining the power and efficiency developers love.
 
----
-
-## About The Project
-
-Traditional CLIs like **Bash**, **Zsh**, **Cmd**, and **PowerShell** are undeniably powerful, but often intimidating due to:
-
-- Cryptic and complex syntax  
-- A vast array of commands and flags  
-- Cross-platform inconsistencies (Linux/macOS/Windows)
-
-**Zyntax** simplifies this experience by acting as a smart bridge between human language and the command line. Powered by **Natural Language Processing (NLP)**, it interprets your plain-English instructions and converts them into valid terminal commands—automatically tailored to your OS.
+🔥 **Cross-platform**: Works consistently on Linux, macOS, and Windows  
+🧠 **Smart parsing**: Advanced NLP with spaCy for accurate intent recognition in English and Hinglish  
+⚡ **Fast**: Optimized for real-time command processing  
+🛠 **Extensible**: Built with modularity and extensibility in mind
 
 ---
 
 ## ✨ Features
 
-- **🧠 Natural Language Understanding**  
-  Type your command in plain English and Zyntax will figure out the rest.
+- **Multilingual Support**: Works with English and Hinglish commands
+- **Natural Language Processing**: Advanced command understanding using spaCy
+- **Cross-Platform Compatibility**: Unified interface across Linux, macOS, and Windows
+- **Smart Command Mapping**: Automatically translates to platform-specific commands
+- **File Operations**: Create, move, copy, delete files and directories naturally
+- **Git Integration**: Manage repositories with conversational commands
+- **System Information**: Check memory, disk usage, and system status
+- **Error Handling**: Clear feedback and graceful error recovery
 
-- **🖥️ Cross-Platform Compatibility**  
-  Supports Linux, macOS, and Windows by auto-detecting the platform.
+## 🚀 Quick Start
 
-- **📁 Core Command Coverage**  
-  Includes operations like:
-  - Files/Directories: `ls`/`dir`, `cd`, `pwd`, `mkdir`/`md`, `rm`/`del`, `cp`/`copy`, `mv`/`move`, `cat`/`type`, `touch`
-  - System Info: `whoami`, memory and disk stats, process listing
-  - Git: `git status`, `git init`, `git commit` with message detection
-
-- **🤖 Fuzzy Matching**  
-  Handles minor typos and similar phrasing.
-
-- **💡 Suggestions**  
-  Offers "Did you mean...?" when unsure.
-
-- **⌨️ Direct Command Execution**  
-  Passes through recognizable shell commands like `ls`, `cd ..` without NLP overhead.
-
----
-
-## 🛠️ Getting Started
-
-Follow these steps to install and run Zyntax locally:
-
-### 📋 Prerequisites
-
-- Python 3.8+
-- `pip` (Python package manager)
-- Git
-
-### ⚙️ Installation
+### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/racxhit/Zyntax-NLP-Terminal.git
-cd Zyntax-NLP-Terminal
+pip install zyntax
+```
 
-# Create a virtual environment
-python -m venv venv
+*Note: The required spaCy language model will be downloaded automatically on first run.*
 
-# Activate the environment
-# macOS/Linux:
-source venv/bin/activate
-# Windows:
-.\venv\Scripts\activate
+### Usage
 
-# Install dependencies
-pip install -r requirements.txt
+```bash
+zyntax
+```
 
-# Download spaCy English model if not auto-prompted
+```
+🚀 Zyntax - Natural Language Terminal
+💬 Type commands in natural language (English/Hinglish). Type 'exit' to quit.
+
+Zyntax> create a new folder called my_project
+Zyntax> change directory to my_project
+Zyntax> make an empty file named README.md
+Zyntax> folder banao docs
+Zyntax> what's the git status?
+```
+
+## 📖 Command Examples
+
+| Natural Language | Traditional Command |
+|------------------|-------------------|
+| `list all files` | `ls -la` / `dir` |
+| `show current directory` | `pwd` / `cd` |
+| `create folder called docs` | `mkdir docs` / `md docs` |
+| `folder banao my_project` | `mkdir my_project` |
+| `copy file.txt to backup/` | `cp file.txt backup/` / `copy file.txt backup\` |
+| `remove old_file.txt` | `rm old_file.txt` / `del old_file.txt` |
+| `show memory usage` | System info via psutil |
+| `git commit with message "fix bug"` | `git commit -m "fix bug"` |
+
+## 🛠 Supported Operations
+
+- **File Management**: Create, read, copy, move, delete files
+- **Directory Navigation**: Change directories, show current path
+- **Git Operations**: Status, init, commit with message parsing
+- **System Information**: Memory usage, user info, process management
+- **Text Operations**: Display file contents, basic text manipulation
+
+## 💻 Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **Linux** | ✅ Full Support | Native command mapping |
+| **macOS** | ✅ Full Support | Uses Linux commands with macOS compatibility |
+| **Windows** | ✅ Full Support | Automatic CMD/PowerShell translation |
+
+## 📋 Requirements
+
+- **Python**: 3.8 or higher
+- **Operating System**: Linux, macOS, or Windows
+- **Dependencies**: spaCy, rapidfuzz, psutil
+- **Language Model**: en_core_web_sm (downloaded automatically)
+
+## 🔧 Installation Details
+
+### Using pip (Recommended)
+
+```bash
+pip install zyntax
+```
+
+The spaCy language model will be downloaded automatically on first run. If you prefer to download it manually beforehand:
+
+```bash
 python -m spacy download en_core_web_sm
 ```
 
-### ▶️ Running Zyntax
+### From Source
 
 ```bash
-python main.py
+git clone https://github.com/racxhit/Zyntax-NLP-Terminal.git
+cd Zyntax-NLP-Terminal
+pip install -e .
 ```
 
-You’ll see a `Zyntax>` prompt. Start typing in natural language!
+## 🎯 Use Cases
 
----
+- **Beginners**: Learn command-line operations without memorizing syntax
+- **Cross-platform developers**: Use consistent commands across different systems
+- **Automation**: Natural language scripting and task automation
+- **Education**: Teaching terminal concepts with intuitive language
+- **Productivity**: Faster command execution with conversational interface
 
-## 🧪 Usage Examples
+## 🤝 Contributing
+
+We welcome contributions! Please see our [contributing guidelines](https://github.com/racxhit/Zyntax-NLP-Terminal/blob/main/CONTRIBUTING.md) for details.
+
+### Development Setup
 
 ```bash
-Zyntax> show me the files in this folder
-# Executes: ls -la or dir
-
-Zyntax> make a new directory called MyProject
-# Executes: mkdir MyProject
-
-Zyntax> change directory to MyProject
-# Executes: cd MyProject
-
-Zyntax> where am i
-# Executes: pwd or cd
-
-Zyntax> create an empty file named config.json
-# Executes: touch config.json
-
-Zyntax> rename config.json to settings.json
-# Executes: mv config.json settings.json
-
-Zyntax> check memory usage
-# Displays memory info using psutil
-
-Zyntax> what is the git status?
-# Executes: git status
-
-Zyntax> commit these changes with message "feat: initial structure"
-# Executes: git commit -m "feat: initial structure"
+git clone https://github.com/racxhit/Zyntax-NLP-Terminal.git
+cd Zyntax-NLP-Terminal
+pip install -e ".[dev]"
+pytest tests/
 ```
 
----
+## 📝 License
 
-## 🧰 Tech Stack
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-- **Python** — The backbone
-- **spaCy** — NLP parsing (POS tagging, entity extraction)
-- **RapidFuzz** — Fuzzy command and intent matching
-- **psutil** — System-level information gathering
+## 🙏 Acknowledgments
 
----
+- Built with [spaCy](https://spacy.io/) for natural language processing
+- Uses [rapidfuzz](https://github.com/maxbachmann/RapidFuzz) for fuzzy string matching
+- System operations powered by [psutil](https://github.com/giampaolo/psutil)
 
-## 🐞 Known Issues & Areas for Improvement
+## 🔗 Links
 
-- **Entity Extraction**: Occasionally struggles with edge cases or overly simple inputs.
-- **Action Matching**: May confuse similar phrases, e.g., "show file X" vs. "show files."
-- **Command Coverage**: Basic commands only; advanced flags/options are unsupported for now.
-
-
----
-
-## 🔮 Roadmap
-
-- 🔬 Improve NLP entity extraction and command matching
-- 🔧 Add advanced utilities (`grep`, `find`, `curl`, etc.)
-- 🧱 Extend support for:
-  - Shell piping, redirection, and job control
-  - Custom aliases and shell history
-- 📦 Package as a PyPI module and/or standalone binary (via PyInstaller)
-- 🖥️ *Stretch Goal:* Build a simple GUI wrapper for ease of use
+- **Documentation**: [GitHub Wiki](https://github.com/racxhit/Zyntax-NLP-Terminal/wiki)
+- **Bug Reports**: [GitHub Issues](https://github.com/racxhit/Zyntax-NLP-Terminal/issues)
+- **Feature Requests**: [GitHub Discussions](https://github.com/racxhit/Zyntax-NLP-Terminal/discussions)
+- **PyPI Package**: [https://pypi.org/project/zyntax/](https://pypi.org/project/zyntax/)
 
 ---
 
-## 📄 License
-
-Distributed under the MIT License. See [`LICENSE`](LICENSE) for more details.
-
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
+**Made with ❤️ for developers who believe terminals should speak human**
 
 

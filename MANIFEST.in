@@ -1,0 +1,9 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include zyntax *.py
+recursive-exclude zyntax/__pycache__ *
+recursive-exclude zyntax/*/__pycache__ *
+exclude tests/*
+exclude pytest.ini
+exclude PUBLISHING_GUIDE.md
