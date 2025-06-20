@@ -102,8 +102,8 @@ python -m spacy download en_core_web_sm
 ### From Source
 
 ```bash
-git clone https://github.com/racxhit/Zyntax-NLP-Terminal.git
-cd Zyntax-NLP-Terminal
+git clone https://github.com/racxhit/Zyntax.git
+cd Zyntax
 pip install -e .
 ```
 
@@ -117,13 +117,13 @@ pip install -e .
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [contributing guidelines](https://github.com/racxhit/Zyntax-NLP-Terminal/blob/main/CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [contributing guidelines](https://github.com/racxhit/Zyntax/blob/main/CONTRIBUTING.md) for details.
 
 ### Development Setup
 
 ```bash
-git clone https://github.com/racxhit/Zyntax-NLP-Terminal.git
-cd Zyntax-NLP-Terminal
+git clone https://github.com/racxhit/Zyntax.git
+cd Zyntax
 pip install -e ".[dev]"
 pytest tests/
 ```
@@ -140,9 +140,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔗 Links
 
-- **Documentation**: [GitHub Wiki](https://github.com/racxhit/Zyntax-NLP-Terminal/wiki)
-- **Bug Reports**: [GitHub Issues](https://github.com/racxhit/Zyntax-NLP-Terminal/issues)
-- **Feature Requests**: [GitHub Discussions](https://github.com/racxhit/Zyntax-NLP-Terminal/discussions)
+- **Documentation**: [GitHub Wiki](https://github.com/racxhit/Zyntax/wiki)
+- **Bug Reports**: [GitHub Issues](https://github.com/racxhit/Zyntax/issues)
+- **Feature Requests**: [GitHub Discussions](https://github.com/racxhit/Zyntax/discussions)
 - **PyPI Package**: [https://pypi.org/project/zyntax/](https://pypi.org/project/zyntax/)
 
 ---

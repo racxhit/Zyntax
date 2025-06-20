@@ -22,7 +22,7 @@ setup(
     description="A smart terminal interface that understands natural language commands in English and Hinglish",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/racxhit/Zyntax-NLP-Terminal",
+    url="https://github.com/racxhit/Zyntax",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
