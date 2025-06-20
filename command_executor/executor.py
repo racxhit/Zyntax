@@ -29,19 +29,23 @@ COMMAND_MAP = {
     'git_status': {'default': ['git', 'status']},
     'git_init': {'default': ['git', 'init']},
     'git_commit': {'default': ['git', 'commit']},
-    'show_processes': {'Linux': ['ps', 'aux'], 'Windows': ['tasklist']},
-    'disk_usage': {'Linux': ['df', '-h'], 'Windows': ['wmic', 'logicaldisk', 'get', 'size,freespace,caption']},
-    'memory_usage': {'Linux': ['free', '-m'], 'Darwin': ["#"], 'Windows': ['wmic', 'OS', 'get', 'FreePhysicalMemory,TotalVisibleMemorySize', '/Value']},
-    'grep': {'default': ['grep']}
+    'show_processes': {'Linux': ['ps'], 'Windows': ['tasklist']}, # Base command, args like 'aux' come from parser
+    'disk_usage': {'Linux': ['df'], 'Windows': ['wmic', 'logicaldisk', 'get', 'size,freespace,caption']}, # Base command, args like '-h' come from parser
+    'memory_usage': {'Linux': ['free'], 'Darwin': ["#PYTHON_PSUTIL_MEM#"], 'Windows': ['wmic', 'OS', 'get', 'FreePhysicalMemory,TotalVisibleMemorySize', '/Value']}, # Base command
+    'grep': {'default': ['grep']},
+    'chmod': {'default': ['chmod']},
+    'make_executable': {'default': ['chmod', '+x']}, # New action mapping
+    'ping': {'default': ['ping']},
 }
 
 def get_platform_command(action, args):
     os_name = platform.system()
-    if action == 'memory_usage': return "PYTHON_PSUTIL_MEM"
+    if action == 'memory_usage' and (os_name == 'Darwin' or not COMMAND_MAP['memory_usage'].get(os_name)):
+        return "PYTHON_PSUTIL_MEM"
     elif action == 'change_directory':
         if args:
             target_dir = args[0]
-            print(f"Info: Change directory requested to '{target_dir}'.")
+            # print(f"Info: Change directory requested to '{target_dir}'.") # Already printed by parser potentially
             try:
                 expanded_target_dir = os.path.expanduser(target_dir)
                 os.chdir(expanded_target_dir)
@@ -55,40 +59,47 @@ def get_platform_command(action, args):
                 print(f"❌ Error changing directory to {error_path}: {e}")
                 return "PYTHON_HANDLED_CHDIR_FAIL"
         else:
-             print("Info: 'cd' command needs a target directory.")
-             return None
+            try:
+                os.chdir(os.path.expanduser("~"))
+                print(f"Info: Changed directory to HOME.")
+                return "PYTHON_HANDLED_CHDIR_SUCCESS"
+            except Exception as e:
+                print(f"❌ Error changing to home directory: {e}")
+                return "PYTHON_HANDLED_CHDIR_FAIL"
 
     mapping = COMMAND_MAP.get(action)
-    base_cmd = None
+    base_cmd_list = None
     if mapping:
-        base_cmd = mapping.get(os_name)
-        if base_cmd is None and os_name == 'Darwin': base_cmd = mapping.get('Linux')
-        if base_cmd is None: base_cmd = mapping.get('default')
-    if base_cmd is None and 'default' in COMMAND_MAP.get(action, {}):
-         base_cmd = COMMAND_MAP[action]['default']
+        base_cmd_list = mapping.get(os_name)
+        if base_cmd_list is None and os_name == 'Darwin':
+            base_cmd_list = mapping.get('Linux')
+        if base_cmd_list is None:
+            base_cmd_list = mapping.get('default')
 
-    if not base_cmd:
-        print(f"Warning: Action '{action}' not mapped or supported for {os_name}. Check COMMAND_MAP.")
+    if base_cmd_list is None:
+        print(f"Warning: Action '{action}' not directly mapped for {os_name}. Check COMMAND_MAP.")
         return None
 
     if action == 'create_file' and os_name == 'Windows':
          if args:
              filepath = args[0]
              try:
-                 print(f"Creating file using Python: {filepath}")
+                 print(f"Creating file using Python (Windows): {filepath}")
                  with open(filepath, 'x') as f: pass
-                 return "PYTHON_HANDLED"
+                 return "PYTHON_HANDLED_CREATE_FILE_SUCCESS"
              except FileExistsError:
                  print(f"Info: File '{filepath}' already exists.")
-                 return "PYTHON_HANDLED"
+                 return "PYTHON_HANDLED_CREATE_FILE_EXISTS"
              except Exception as e:
-                 print(f"Error creating file with Python: {e}")
+                 print(f"Error creating file '{filepath}' with Python: {e}")
                  return None
          else:
-              print("Error: Filename needed for create_file")
+              print("Error: Filename needed for create_file on Windows")
               return None
 
-    full_cmd = base_cmd + args
+    # For make_executable, args should be the filename(s)
+    # The '+x' is part of base_cmd_list
+    full_cmd = list(base_cmd_list) + args
     return full_cmd
 
 
@@ -97,33 +108,56 @@ def execute_command(parsed_command):
         print("❓ Parser returned an unexpected result.")
         return
 
-    if parsed_command.get('type') == 'piped_commands':
+    command_type = parsed_command.get('type')
+
+    if command_type == 'raw_shell_string':
+        full_raw_command = parsed_command.get('command_string')
+        if not full_raw_command:
+            print("❌ Error: Raw shell string command is empty.")
+            return
+        print(f"🛠️ Executing Raw Shell String: {full_raw_command}")
+        try:
+            result = subprocess.run(full_raw_command, shell=True, capture_output=True, text=True, check=False)
+            if result.stdout: print(f"--- Output ---\n{result.stdout.strip()}\n--------------")
+            if result.stderr: print(f"--- Errors ---\n{result.stderr.strip()}\n--------------")
+            if result.returncode != 0: print(f"⚠️ Command finished with exit code: {result.returncode}")
+        except Exception as e:
+            print(f"❌ An unexpected error occurred during raw shell string execution: {e}")
+        return
+
+
+    if command_type == 'piped_commands':
         command_segments_for_shell = []
         for cmd_struct in parsed_command.get('commands', []):
-            action = cmd_struct.get('action')
-            args = cmd_struct.get('args', [])
+            segment_type = cmd_struct.get('type')
+            cmd_parts_for_segment = []
 
-            os_name = platform.system() # Determine OS for each segment
-            mapping = COMMAND_MAP.get(action)
-            base_cmd_list = None
-            if mapping:
-                base_cmd_list = mapping.get(os_name)
-                if base_cmd_list is None and os_name == 'Darwin': base_cmd_list = mapping.get('Linux')
-                if base_cmd_list is None: base_cmd_list = mapping.get('default')
-            if base_cmd_list is None and 'default' in COMMAND_MAP.get(action, {}):
-                 base_cmd_list = COMMAND_MAP[action]['default']
+            if segment_type == 'raw_command':
+                cmd_parts_for_segment.append(cmd_struct['command'])
+                cmd_parts_for_segment.extend(cmd_struct.get('args', []))
+            else:
+                action = cmd_struct.get('action')
+                args = cmd_struct.get('args', [])
 
-            if not base_cmd_list:
-                print(f"❌ Error: Piped command segment '{action}' not supported on {os_name}.")
+                if action == 'change_directory':
+                     print(f"Warning: 'cd' action found in a pipe segment ('{action} {' '.join(args)}'). This will not affect subsequent piped commands in the same shell execution string.")
+
+                platform_cmd_list_or_action_str = get_platform_command(action, args)
+
+                if platform_cmd_list_or_action_str is None:
+                    print(f"❌ Error: Piped command segment '{action}' could not be mapped.")
+                    return
+                if isinstance(platform_cmd_list_or_action_str, str) and platform_cmd_list_or_action_str.startswith("PYTHON_"):
+                    print(f"❌ Error: Python-internal action '{action}' cannot be part of a shell pipe string.")
+                    return
+                cmd_parts_for_segment = platform_cmd_list_or_action_str
+
+            if cmd_parts_for_segment:
+                try: command_segments_for_shell.append(shlex.join(cmd_parts_for_segment))
+                except AttributeError: command_segments_for_shell.append(" ".join(cmd_parts_for_segment))
+            else:
+                print(f"❌ Error: Could not form command parts for pipe segment: {cmd_struct}")
                 return
-
-            cmd_parts = base_cmd_list + args
-            try:
-                # Use shlex.join to correctly form each command segment string
-                command_segments_for_shell.append(shlex.join(cmd_parts))
-            except AttributeError:
-                print("Warning: shlex.join not available (Python < 3.8?). Using simple space join for pipe segment.")
-                command_segments_for_shell.append(" ".join(cmd_parts)) # Fallback
 
         if command_segments_for_shell:
             full_pipe_command = " | ".join(command_segments_for_shell)
@@ -137,43 +171,39 @@ def execute_command(parsed_command):
                 print(f"❌ An unexpected error occurred during piped execution: {e}")
         return
 
-    # Single command logic
     action = parsed_command.get('action')
     args = parsed_command.get('args', [])
-    command_list_or_action = get_platform_command(action, args)
+    command_list_or_action_str = get_platform_command(action, args)
 
-    if command_list_or_action is None: return
+    if command_list_or_action_str is None:
+        print(f"❓ Command action '{action}' could not be executed.")
+        return
 
-    if isinstance(command_list_or_action, str):
-        # (Python handled actions: cd, psutil, windows create_file)
-        if command_list_or_action.startswith("PYTHON_HANDLED_CHDIR"):
-            status = command_list_or_action.split("_")[-1]
-            if status == "SUCCESS": print(f"✅ Directory changed successfully by Python.")
-            return
-        elif command_list_or_action == "PYTHON_PSUTIL_MEM":
+    if isinstance(command_list_or_action_str, str):
+        if command_list_or_action_str == "PYTHON_HANDLED_CHDIR_SUCCESS": pass # Message printed in get_platform_command
+        elif command_list_or_action_str == "PYTHON_HANDLED_CHDIR_FAIL": pass
+        elif command_list_or_action_str == "PYTHON_PSUTIL_MEM":
             try:
                 mem = psutil.virtual_memory(); gb_divisor = 1024**3
                 print(f"--- Memory Usage (psutil) ---\n  Total: {mem.total/gb_divisor:.2f} GB\n  Available: {mem.available/gb_divisor:.2f} GB\n  Used: {mem.used/gb_divisor:.2f} GB ({mem.percent}%)\n-----------------------------")
-            except ImportError: print("❌ Error: psutil library not found")
+            except ImportError: print("❌ Error: psutil library not found. Please install it: pip install psutil")
             except Exception as e: print(f"❌ Error getting memory info via psutil: {e}")
-            return
-        elif command_list_or_action == "PYTHON_HANDLED":
-             print(f"✅ Action '{action}' completed successfully by Python.")
-             return
-        else:
-            print(f"❌ Internal Error: Unrecognized string command '{command_list_or_action}'")
-            return
-
-    if not isinstance(command_list_or_action, list):
-        print(f"❌ Internal Error: Expected command_list to be a list, got {type(command_list_or_action)}")
+        elif command_list_or_action_str == "PYTHON_HANDLED_CREATE_FILE_SUCCESS": print(f"✅ File created successfully by Python.")
+        elif command_list_or_action_str == "PYTHON_HANDLED_CREATE_FILE_EXISTS": pass
+        else: print(f"❌ Internal Error: Unrecognized Python-handled action string '{command_list_or_action_str}'")
         return
 
-    command_list = command_list_or_action
-    print(f"🛠️ Executing: {' '.join(command_list)}")
+    if not isinstance(command_list_or_action_str, list):
+        print(f"❌ Internal Error: Expected command_list to be a list, got {type(command_list_or_action_str)}")
+        return
+
+    command_list_str = [str(part) for part in command_list_or_action_str]
+    print(f"🛠️ Executing: {shlex.join(command_list_str)}")
     try:
-        result = subprocess.run(command_list, capture_output=True, text=True, check=False, shell=False)
+        result = subprocess.run(command_list_str, capture_output=True, text=True, check=False, shell=False)
         if result.stdout: print(f"--- Output ---\n{result.stdout.strip()}\n--------------")
         if result.stderr: print(f"--- Errors ---\n{result.stderr.strip()}\n--------------")
         if result.returncode != 0: print(f"⚠️ Command finished with exit code: {result.returncode}")
-    except FileNotFoundError: print(f"❌ Error: Command '{command_list[0]}' not found.")
+    except FileNotFoundError: print(f"❌ Error: Command '{command_list_str[0]}' not found.")
     except Exception as e: print(f"❌ An unexpected error occurred: {e}")
+
