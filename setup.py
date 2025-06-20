@@ -16,7 +16,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="zyntax",
-    version="0.1.0a1",
+    version="1.0.0",
     author="Rachit",
     author_email="rachit.developer@gmail.com",  # Replace with your actual email
     description="A smart terminal interface that understands natural language commands in English and Hinglish",
