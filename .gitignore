@@ -45,6 +45,9 @@ venv/
 # macOS
 .DS_Store
 
+# Windows compatibility helper (not for distribution)
+run_zyntax.py
+
 # Project specific
 README_old.md
 PUBLISHING_GUIDE.md

@@ -10,14 +10,32 @@ import psutil
 import shlex
 import sys
 
+# Windows built-in commands that require shell=True
+WINDOWS_SHELL_BUILTINS = {
+    'dir', 'cd', 'mkdir', 'md', 'del', 'rmdir', 'rd', 'type', 'copy', 'move', 
+    'set', 'echo', 'cls', 'exit', 'where', 'find', 'findstr', 'fc', 'comp',
+    'wmic', 'net', 'tasklist'
+}
+
+def needs_shell_on_windows(command_list):
+    """Check if a command needs shell=True on Windows."""
+    if platform.system() != 'Windows':
+        return False
+    if not command_list:
+        return False
+    
+    # Extract the base command (first element)
+    base_command = command_list[0].lower()
+    return base_command in WINDOWS_SHELL_BUILTINS
+
 COMMAND_MAP = {
     'list_files': {'Linux': ['ls'], 'Windows': ['dir']},
-    'show_path': {'Linux': ['pwd'], 'Windows': ['cd']},
+    'show_path': {'Linux': ['pwd'], 'Windows': ['cd']},  # On Windows, 'cd' without args shows current dir
     'change_directory': {'Linux': ['cd'], 'Windows': ['cd']},
-    'make_directory': {'Linux': ['mkdir'], 'Windows': ['md']},
+    'make_directory': {'Linux': ['mkdir'], 'Windows': ['mkdir']},  # mkdir works on modern Windows
     'create_file': {'Linux': ['touch'], 'Windows': ['type', 'NUL', '>']},
     'delete_file': {'Linux': ['rm'], 'Windows': ['del']},
-    'delete_directory': {'Linux': ['rm', '-r'], 'Windows': ['rd', '/s', '/q']},
+    'delete_directory': {'Linux': ['rm', '-r'], 'Windows': ['rmdir', '/s', '/q']},  # rmdir instead of rd
     'display_file': {'Linux': ['cat'], 'Windows': ['type']},
     'move_rename': {'Linux': ['mv'], 'Windows': ['move']},
     'copy_file': {'Linux': ['cp'], 'Windows': ['copy']},
@@ -280,7 +298,16 @@ def execute_command(parsed_command):
 
     print(f"🛠️ Executing: {final_command_to_print}"); sys.stdout.flush()
     try:
-        result = subprocess.run(command_list_str, capture_output=True, text=True, check=False, shell=False, errors='ignore')
+        # Determine if we need shell=True for Windows built-in commands
+        use_shell = needs_shell_on_windows(command_list_str)
+        
+        if use_shell:
+            # For Windows shell built-ins, we need to join the command and use shell=True
+            shell_command = " ".join(command_list_str)
+            result = subprocess.run(shell_command, capture_output=True, text=True, check=False, shell=True, errors='ignore')
+        else:
+            result = subprocess.run(command_list_str, capture_output=True, text=True, check=False, shell=False, errors='ignore')
+            
         if result.stdout: print(f"--- Output ---\n{result.stdout.strip()}\n--------------"); sys.stdout.flush()
         if result.stderr: print(f"--- Errors ---\n{result.stderr.strip()}\n--------------"); sys.stdout.flush()
         if result.returncode != 0: print(f"⚠️ Command finished with exit code: {result.returncode}"); sys.stdout.flush()
